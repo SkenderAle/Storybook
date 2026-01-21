@@ -1,0 +1,5 @@
+{
+  "name": "Storybook AI Editor",
+  "description": "An interactive digital book editor that generates coherent stories from uploaded images using the Gemini AI API.",
+  "requestFramePermissions": []
+}

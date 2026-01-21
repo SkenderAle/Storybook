@@ -1,0 +1,1 @@
+// Logica migrata in index.html per compatibilità GitHub Pages
