@@ -1,1 +1,1 @@
-// Logica migrata in index.html per compatibilità GitHub Pages
+// Codice migrato in index.html
