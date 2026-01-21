@@ -25,19 +25,55 @@
             transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        /* Scrollbar MAXI per selezione facile */
+        .custom-scrollbar::-webkit-scrollbar { width: 14px; height: 14px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { 
+            background: #64748b; 
+            border-radius: 10px; 
+            border: 3px solid #f1f5f9; 
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
         
+        .dragging-item { opacity: 0.4; transform: scale(0.9); }
+        .drag-over-item { border-color: #6366f1 !important; transform: scale(1.05); }
+
         @media print {
+            @page {
+                size: landscape;
+                margin: 0;
+            }
+            body, html {
+                height: auto !important;
+                overflow: visible !important;
+                background: white !important;
+            }
+            #root > div {
+                height: auto !important;
+                display: block !important;
+            }
             .no-print { display: none !important; }
-            body { background: white !important; }
+            .print-container {
+                display: block !important;
+                width: 100% !important;
+            }
             .print-page {
-                page-break-after: always;
+                page-break-after: always !important;
+                break-after: page !important;
                 display: flex !important;
+                flex-direction: row !important;
                 width: 100vw !important;
                 height: 100vh !important;
                 box-shadow: none !important;
                 border: none !important;
+                border-bottom: 1px solid #eee !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            /* Assicura che le immagini di sfondo siano caricate in stampa */
+            .bg-cover {
+                background-size: cover !important;
+                background-position: center !important;
             }
         }
     </style>
@@ -71,8 +107,11 @@
             const [status, setStatus] = useState('');
             const [pixabayQuery, setPixabayQuery] = useState('');
             const [pixabayResults, setPixabayResults] = useState([]);
+            const [isDraggingOver, setIsDraggingOver] = useState(false);
             
-            // Gestione API Key Manuale
+            const [draggedPageIndex, setDraggedPageIndex] = useState(null);
+            const [dragOverIndex, setDragOverIndex] = useState(null);
+            
             const [manualKey, setManualKey] = useState(localStorage.getItem('gemini_api_key') || '');
             
             const [settings, setSettings] = useState({
@@ -83,16 +122,62 @@
 
             const fileInputRef = useRef(null);
 
-            // Salva la chiave quando cambia
             useEffect(() => {
                 localStorage.setItem('gemini_api_key', manualKey);
             }, [manualKey]);
+
+            const processFiles = async (files) => {
+                const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+                if (imageFiles.length === 0) return;
+
+                setStatus('Caricamento foto...');
+                const newPages = [];
+                for (let file of imageFiles) {
+                    const reader = new FileReader();
+                    const dataUrl = await new Promise(r => {
+                        reader.onload = ev => r(ev.target.result);
+                        reader.readAsDataURL(file);
+                    });
+                    newPages.push({ id: Math.random().toString(36), imageUrl: dataUrl, text: '' });
+                }
+                setPages(prev => [...prev, ...newPages]);
+                setStatus('Foto caricate!');
+                setTimeout(() => setStatus(''), 2000);
+            };
+
+            const handleGlobalDrop = (e) => {
+                e.preventDefault();
+                setIsDraggingOver(false);
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    processFiles(e.dataTransfer.files);
+                } else {
+                    const imageUrl = e.dataTransfer.getData("text/plain");
+                    if (imageUrl && imageUrl.startsWith('http')) {
+                        addImage(imageUrl);
+                    }
+                }
+            };
+
+            const onDragStart = (index) => setDraggedPageIndex(index);
+            const onDragEnter = (index) => setDragOverIndex(index);
+            const onDragEnd = () => {
+                if (draggedPageIndex !== null && dragOverIndex !== null && draggedPageIndex !== dragOverIndex) {
+                    const updatedPages = [...pages];
+                    const [movedItem] = updatedPages.splice(draggedPageIndex, 1);
+                    updatedPages.splice(dragOverIndex, 0, movedItem);
+                    setPages(updatedPages);
+                    setCurrentIndex(dragOverIndex);
+                }
+                setDraggedPageIndex(null);
+                setDragOverIndex(null);
+            };
 
             const searchPixabay = async () => {
                 if (!pixabayQuery) return;
                 setStatus('Cercando...');
                 try {
-                    const r = await fetch(`https://pixabay.com/api/?key=${PIXABAY_KEY}&q=${encodeURIComponent(pixabayQuery)}&image_type=photo&per_page=12`);
+                    // Aumentato a 50 risultati
+                    const r = await fetch(`https://pixabay.com/api/?key=${PIXABAY_KEY}&q=${encodeURIComponent(pixabayQuery)}&image_type=photo&per_page=50`);
                     const d = await r.json();
                     setPixabayResults(d.hits || []);
                 } catch (err) { setStatus('Errore Pixabay'); }
@@ -100,7 +185,7 @@
             };
 
             const addImage = async (url) => {
-                setStatus('Caricamento...');
+                setStatus('Aggiunta...');
                 try {
                     const r = await fetch(url);
                     const b = await r.blob();
@@ -110,66 +195,38 @@
                         reader.readAsDataURL(b);
                     });
                     setPages(prev => [...prev, { id: Math.random().toString(36), imageUrl: dataUrl, text: '' }]);
-                    setStatus('Aggiunta!');
                 } catch (e) { setStatus('Errore foto'); }
                 setTimeout(() => setStatus(''), 2000);
             };
 
-            const handleFileUpload = async (e) => {
-                const files = e.target.files;
-                if (!files) return;
-                for (let file of Array.from(files)) {
-                    const reader = new FileReader();
-                    const dataUrl = await new Promise(r => {
-                        reader.onload = ev => r(ev.target.result);
-                        reader.readAsDataURL(file);
-                    });
-                    setPages(prev => [...prev, { id: Math.random().toString(36), imageUrl: dataUrl, text: '' }]);
-                }
-            };
-
             const generateStory = async () => {
                 const keyToUse = manualKey || process.env.API_KEY;
-                if (!keyToUse) {
-                    alert("Inserisci la tua API Key Gemini nel campo apposito.");
-                    return;
-                }
+                if (!keyToUse) return alert("Inserisci l'API Key Gemini.");
                 if (!title) return alert("Inserisci un titolo.");
                 if (pages.length < 2) return alert("Carica almeno 2 foto.");
 
                 setIsGenerating(true);
                 setStatus('L\'IA sta scrivendo...');
-
                 try {
                     const ai = new GoogleGenAI({ apiKey: keyToUse });
                     const imageParts = pages.map(p => ({
                         inlineData: { mimeType: 'image/jpeg', data: p.imageUrl.split(',')[1] }
                     }));
-
                     const response = await ai.models.generateContent({
                         model: 'gemini-3-flash-preview',
                         contents: [{ 
-                            parts: [
-                                ...imageParts, 
-                                { text: `Sei un autore di libri per bambini. Scrivi una storia magica in ITALIANO coerente con queste immagini. 
-                                Titolo: ${title}.
-                                L'indice 0 è la COPERTINA (scrivi ""). 
-                                Per gli altri indici, scrivi un testo narrativo poetico. 
-                                Rispondi SOLO con un array JSON di stringhe.` }
-                            ] 
+                            parts: [...imageParts, { text: `Autore di favole. Scrivi storia magica in ITALIANO coerente con le foto. Titolo: ${title}. Indice 0 = COPERTINA (testo ""). Altri = testo poetico. Rispondi SOLO array JSON stringhe.` }] 
                         }],
                         config: {
                             responseMimeType: "application/json",
                             responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
                         }
                     });
-
                     const story = JSON.parse(response.text || "[]");
                     setPages(prev => prev.map((p, i) => ({ ...p, text: story[i] || p.text })));
                     setStatus('Completato! ✨');
                 } catch (error) {
-                    console.error(error);
-                    setStatus('Errore API. Chiave errata?');
+                    setStatus('Errore API.');
                 } finally {
                     setIsGenerating(false);
                     setTimeout(() => setStatus(''), 4000);
@@ -177,159 +234,129 @@
             };
 
             const PageView = ({ page, index, isPrint = false }) => (
-                <div className={`flex w-full max-w-5xl aspect-[1.6/1] bg-white book-spread overflow-hidden relative ${isPrint ? 'print-page' : 'rounded-3xl'}`}>
-                    {/* SX: IMMAGINE */}
-                    <div className="w-1/2 h-full bg-slate-50 border-r border-slate-100 relative overflow-hidden">
+                <div className={`flex w-full aspect-[1.6/1] bg-white book-spread overflow-hidden relative ${isPrint ? 'print-page' : 'max-w-5xl rounded-3xl'}`}>
+                    <div className="w-1/2 h-full bg-slate-50 border-r border-slate-100 relative overflow-hidden flex-shrink-0">
                         {index === 0 ? (
                             <div className="w-full h-full flex flex-col items-center justify-center p-12 text-slate-100/50">
-                                <span className="text-[10rem]">📘</span>
+                                <span className={`${isPrint ? 'text-[15rem]' : 'text-[10rem]'}`}>📘</span>
                             </div>
                         ) : (
                             <div className="w-full h-full bg-cover bg-center" style={{ backgroundImage: `url(${page.imageUrl})` }} />
                         )}
                         <div className="absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-black/[0.04] to-transparent pointer-events-none" />
                     </div>
-
-                    {/* DX: TESTO */}
-                    <div className="w-1/2 h-full p-12 sm:p-24 relative flex flex-col items-center justify-center text-center bg-white">
+                    <div className="w-1/2 h-full p-12 sm:p-24 relative flex flex-col items-center justify-center text-center bg-white flex-shrink-0">
                         <div className="absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-black/[0.04] to-transparent pointer-events-none" />
-                        <div 
-                            className={`w-full z-10 ${settings.fontFamily}`}
-                            style={{ 
-                                fontSize: index === 0 ? `${settings.fontSize * 1.5}px` : `${settings.fontSize}px`,
-                                color: settings.textColor,
-                                padding: '1rem'
-                            }}
-                            contentEditable={!isPrint && index !== 0}
-                            suppressContentEditableWarning
-                            onBlur={(e) => {
-                                const up = [...pages];
-                                up[index].text = e.currentTarget.innerText;
-                                setPages(up);
-                            }}
-                        >
+                        <div className={`w-full z-10 ${settings.fontFamily}`} style={{ fontSize: index === 0 ? `${settings.fontSize * 1.5}px` : `${settings.fontSize}px`, color: settings.textColor, padding: '1rem' }} contentEditable={!isPrint && index !== 0} suppressContentEditableWarning onBlur={(e) => { const up = [...pages]; up[index].text = e.currentTarget.innerText; setPages(up); }}>
                             {index === 0 ? (
                                 <div className="space-y-6">
-                                    <h1 className="font-amatic text-7xl sm:text-8xl text-indigo-900 leading-tight uppercase tracking-tight">{title || "Mio Libro"}</h1>
+                                    <h1 className="font-amatic text-7xl sm:text-8xl text-indigo-900 leading-tight uppercase">{title || "Mio Libro"}</h1>
                                     <div className="w-12 h-1 bg-indigo-100 mx-auto rounded-full" />
                                     <p className="text-2xl italic text-slate-300 font-patrick">di {author || "Autore"}</p>
                                 </div>
-                            ) : (
-                                page.text || (isPrint ? "" : "Clicca per scrivere...")
-                            )}
+                            ) : (page.text || (isPrint ? "" : "Clicca per scrivere..."))}
                         </div>
-                        <div className="absolute bottom-6 text-[10px] text-slate-200 font-black tracking-[0.3em] uppercase">
-                            {index === 0 ? "Copertina" : `Pagina ${index}`}
-                        </div>
+                        <div className="absolute bottom-6 text-[10px] text-slate-200 font-black tracking-[0.3em] uppercase">{index === 0 ? "Copertina" : `Pagina ${index}`}</div>
                     </div>
                 </div>
             );
 
             return (
-                <div className="flex flex-col md:flex-row h-screen">
+                <div className="flex flex-col md:flex-row h-screen relative" onDragOver={e => { e.preventDefault(); setIsDraggingOver(true); }} onDragLeave={() => setIsDraggingOver(false)} onDrop={handleGlobalDrop}>
                     
-                    {/* SIDEBAR TOOLS */}
+                    {/* Sezione Stampa (nascosta a video) */}
+                    <div className="hidden print:block print-container">
+                        {pages.map((p, i) => <PageView key={p.id} page={p} index={i} isPrint={true} />)}
+                    </div>
+
+                    {isDraggingOver && (
+                        <div className="no-print absolute inset-0 bg-indigo-600/10 backdrop-blur-sm z-[100] border-4 border-dashed border-indigo-500 flex items-center justify-center pointer-events-none">
+                            <div className="bg-white px-10 py-6 rounded-3xl shadow-2xl text-center scale-110">
+                                <span className="text-6xl block mb-4">📥</span>
+                                <p className="font-amatic text-4xl text-indigo-600 font-bold uppercase tracking-widest">Lascia qui i file</p>
+                            </div>
+                        </div>
+                    )}
+
                     <aside className="no-print w-full md:w-80 bg-white border-r flex flex-col z-50 shadow-2xl overflow-hidden">
                         <div className="p-6 border-b bg-slate-50/50">
                             <h2 className="text-3xl font-amatic text-indigo-600 mb-6 flex items-center gap-2 tracking-widest"><span>✨</span> StoryStudio</h2>
-                            
-                            {/* CAMPO API KEY MANUALE */}
-                            <div className="mb-6 space-y-2">
-                                <label className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">
-                                    Gemini API Key 
-                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-500 hover:underline">Prendila qui</a>
-                                </label>
-                                <input 
-                                    type="password" 
-                                    placeholder="Incolla chiave qui..." 
-                                    className={`w-full p-2 text-xs border rounded-xl outline-none transition-all ${manualKey ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-200 focus:ring-2 ring-indigo-100'}`}
-                                    value={manualKey} 
-                                    onChange={e => setManualKey(e.target.value)} 
-                                />
+                            <div className="mb-4 space-y-2">
+                                <label className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Gemini API Key <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-500 hover:underline">Prendila qui</a></label>
+                                <input type="password" placeholder="Chiave API..." className={`w-full p-2 text-xs border rounded-xl outline-none transition-all ${manualKey ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-200 focus:ring-2 ring-indigo-100'}`} value={manualKey} onChange={e => setManualKey(e.target.value)} />
                             </div>
-
-                            <div className="space-y-3">
-                                <input type="text" placeholder="Titolo della storia" className="w-full p-3 border rounded-xl text-sm focus:ring-2 ring-indigo-200 outline-none transition-all" value={title} onChange={e => setTitle(e.target.value)} />
-                                <input type="text" placeholder="Autore" className="w-full p-3 border rounded-xl text-sm focus:ring-2 ring-indigo-200 outline-none transition-all" value={author} onChange={e => setAuthor(e.target.value)} />
+                            <div className="space-y-2">
+                                <input type="text" placeholder="Titolo" className="w-full p-2 border rounded-xl text-sm outline-none" value={title} onChange={e => setTitle(e.target.value)} />
+                                <input type="text" placeholder="Autore" className="w-full p-2 border rounded-xl text-sm outline-none" value={author} onChange={e => setAuthor(e.target.value)} />
                             </div>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-6 space-y-10 custom-scrollbar">
-                            <div className="space-y-3">
-                                <button 
-                                    onClick={generateStory} 
-                                    disabled={isGenerating} 
-                                    className={`w-full py-4 rounded-2xl font-bold text-white shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95 ${isGenerating ? 'bg-slate-300' : (manualKey ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-400 opacity-50')}`}
-                                >
-                                    {isGenerating ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '🖋️'}
-                                    {isGenerating ? 'Sto scrivendo...' : 'GENERA STORIA AI'}
-                                </button>
-                                {status && <p className="text-[10px] text-center font-bold text-indigo-400 uppercase tracking-widest animate-pulse">{status}</p>}
-                                {!manualKey && <p className="text-[9px] text-center text-slate-400 leading-tight">Inserisci l'API Key sopra per attivare l'IA</p>}
-                            </div>
+                        <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+                            <button onClick={generateStory} disabled={isGenerating} className={`w-full py-4 rounded-2xl font-bold text-white shadow-lg flex items-center justify-center gap-2 transition-all ${isGenerating ? 'bg-slate-300' : (manualKey ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-400 opacity-50')}`}>
+                                {isGenerating ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '🖋️'}
+                                {isGenerating ? 'Scrivo...' : 'GENERA STORIA AI'}
+                            </button>
+                            {status && <p className="text-[10px] text-center font-bold text-indigo-400 uppercase animate-pulse">{status}</p>}
 
                             <div className="space-y-4 border-t pt-6">
-                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cerca Immagini (Pixabay)</h3>
-                                <div className="flex gap-1">
-                                    <input type="text" placeholder="Esempio: fiaba..." className="flex-1 p-2 text-xs border rounded-lg outline-none" value={pixabayQuery} onChange={e => setPixabayQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchPixabay()} />
-                                    <button onClick={searchPixabay} className="bg-slate-800 text-white px-3 rounded-lg text-xs font-bold hover:bg-black transition-colors">Vai</button>
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Caricamento</h3>
+                                <button onClick={() => fileInputRef.current.click()} className="w-full py-3 border-2 border-dashed border-indigo-200 rounded-xl text-indigo-600 font-bold text-xs hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2">📂 CARICA DAL COMPUTER</button>
+                                <input type="file" ref={fileInputRef} multiple accept="image/*" className="hidden" onChange={e => processFiles(e.target.files)} />
+                                
+                                <div className="flex gap-1 mt-2">
+                                    <input type="text" placeholder="Cerca immagini..." className="flex-1 p-2 text-xs border rounded-lg outline-none" value={pixabayQuery} onChange={e => setPixabayQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchPixabay()} />
+                                    <button onClick={searchPixabay} className="bg-slate-800 text-white px-3 rounded-lg text-xs font-bold hover:bg-black">Vai</button>
                                 </div>
-                                <div className="grid grid-cols-3 gap-1 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                                <div className="grid grid-cols-3 gap-1 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
                                     {pixabayResults.map(h => (
-                                        <img key={h.id} src={h.previewURL} className="cursor-pointer rounded border h-16 w-full object-cover hover:scale-105 transition-transform" onClick={() => addImage(h.webformatURL)} />
+                                        <img key={h.id} src={h.previewURL} draggable onDragStart={e => e.dataTransfer.setData("text/plain", h.webformatURL)} className="cursor-grab rounded border h-16 w-full object-cover hover:scale-105" onClick={() => addImage(h.webformatURL)} title="Trascina o clicca per aggiungere"/>
                                     ))}
                                 </div>
+                                <p className="text-[9px] text-slate-400 text-center italic">{pixabayResults.length > 0 ? `Trovati ${pixabayResults.length} risultati` : ''}</p>
                             </div>
 
                             <div className="space-y-4 border-t pt-6">
-                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pagine ({pages.length})</h3>
-                                <div className="grid grid-cols-2 gap-2">
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pagine (Trascina per riordinare)</h3>
+                                <div className="grid grid-cols-2 gap-3">
                                     {pages.map((p, i) => (
-                                        <div key={p.id} className={`relative group rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${currentIndex === i ? 'border-indigo-500 shadow-md scale-105' : 'border-transparent opacity-60'}`} onClick={() => setCurrentIndex(i)}>
+                                        <div 
+                                            key={p.id} 
+                                            draggable 
+                                            onDragStart={() => onDragStart(i)}
+                                            onDragEnter={() => onDragEnter(i)}
+                                            onDragEnd={onDragEnd}
+                                            onDragOver={e => e.preventDefault()}
+                                            className={`relative group rounded-xl overflow-hidden border-4 cursor-move transition-all ${currentIndex === i ? 'border-indigo-500 shadow-xl scale-105' : 'border-white shadow-sm'} ${draggedPageIndex === i ? 'dragging-item' : ''} ${dragOverIndex === i ? 'drag-over-item' : ''}`} 
+                                            onClick={() => setCurrentIndex(i)}
+                                        >
                                             <div className="aspect-video bg-cover bg-center" style={{ backgroundImage: `url(${p.imageUrl})` }} />
-                                            <button onClick={e => { e.stopPropagation(); setPages(pages.filter((_, idx) => idx !== i)); }} className="absolute top-0 right-0 bg-red-500 text-white w-5 h-5 flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+                                            <button onClick={e => { e.stopPropagation(); setPages(pages.filter((_, idx) => idx !== i)); }} className="absolute top-1 right-1 bg-red-500 text-white w-5 h-5 flex items-center justify-center text-[10px] rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">×</button>
+                                            <div className="absolute bottom-0 left-0 right-0 bg-black/30 text-[8px] text-white text-center font-bold">{i === 0 ? "COV" : `P${i}`}</div>
                                         </div>
                                     ))}
-                                    <button onClick={() => fileInputRef.current.click()} className="aspect-video border-2 border-dashed border-slate-200 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-50 transition-colors">➕</button>
                                 </div>
-                                <input type="file" ref={fileInputRef} multiple accept="image/*" className="hidden" onChange={handleFileUpload} />
                             </div>
                         </div>
                     </aside>
 
-                    {/* MAIN VIEWPORT */}
-                    <main className="flex-1 flex flex-col items-center justify-center p-8 relative bg-slate-50/50 overflow-hidden">
-                        <div className="hidden print:block w-full">
-                            {pages.map((p, i) => <PageView key={p.id} page={p} index={i} isPrint={true} />)}
+                    <main className="no-print flex-1 flex flex-col items-center justify-center p-8 relative bg-slate-50/50 overflow-hidden">
+                        <div className="absolute top-10 flex items-center gap-6 z-40">
+                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-4 rounded-full shadow-lg hover:scale-110 disabled:opacity-20 border border-slate-100" disabled={currentIndex === 0}>❮</button>
+                            <div className="bg-white/95 backdrop-blur px-8 py-3 rounded-full text-xs font-bold text-slate-500 shadow-md border border-slate-100 uppercase tracking-widest">{pages.length > 0 ? (currentIndex === 0 ? 'Copertina' : `Pagina ${currentIndex} / ${pages.length - 1}`) : 'Inizia qui'}</div>
+                            <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-4 rounded-full shadow-lg hover:scale-110 disabled:opacity-20 border border-slate-100" disabled={currentIndex === pages.length - 1}>❯</button>
                         </div>
-
-                        {/* Navigazione */}
-                        <div className="no-print absolute top-10 flex items-center gap-6 z-40">
-                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-4 rounded-full shadow-lg hover:scale-110 disabled:opacity-20 transition-all border border-slate-100" disabled={currentIndex === 0}>❮</button>
-                            <div className="bg-white/95 backdrop-blur px-8 py-3 rounded-full text-xs font-bold text-slate-500 shadow-md border border-slate-100 uppercase tracking-widest">
-                                {pages.length > 0 ? (currentIndex === 0 ? 'Copertina' : `Pagina ${currentIndex} / ${pages.length - 1}`) : 'Carica Immagini'}
-                            </div>
-                            <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-4 rounded-full shadow-lg hover:scale-110 disabled:opacity-20 transition-all border border-slate-100" disabled={currentIndex === pages.length - 1}>❯</button>
-                        </div>
-
                         {pages.length > 0 ? (
-                            <div className="no-print w-full flex justify-center px-4 animate-in fade-in zoom-in duration-500">
-                                <PageView page={pages[currentIndex]} index={currentIndex} />
-                            </div>
+                            <div className="w-full flex justify-center px-4 animate-in fade-in zoom-in duration-500"><PageView page={pages[currentIndex]} index={currentIndex} /></div>
                         ) : (
-                            <div className="text-slate-200 text-center select-none opacity-40">
-                                <div className="text-[12rem] mb-6">🖋️</div>
-                                <p className="text-3xl font-amatic">Trascina le tue foto nella sidebar per iniziare</p>
-                            </div>
+                            <div className="text-slate-200 text-center select-none opacity-40"><div className="text-[12rem] mb-6">🖋️</div><p className="text-3xl font-amatic">Trascina o carica le immagini per iniziare</p></div>
                         )}
                     </main>
 
-                    {/* STYLE SIDEBAR */}
                     <aside className="no-print w-full md:w-72 bg-white border-l p-8 flex flex-col z-50 shadow-xl">
-                        <h3 className="font-amatic text-2xl font-bold border-b pb-4 mb-10 text-slate-800 tracking-widest uppercase">Design</h3>
-                        <div className="space-y-10 flex-1">
+                        <h3 className="font-amatic text-2xl font-bold border-b pb-4 mb-10 text-slate-800 uppercase tracking-widest">Design</h3>
+                        <div className="space-y-10 flex-1 overflow-y-auto custom-scrollbar pr-2">
                             <div className="space-y-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Font</label>
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Carattere</label>
                                 <select className="w-full p-4 bg-slate-50 border rounded-xl text-sm font-bold outline-none cursor-pointer" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
                                     <option value="font-patrick">Handwriting</option>
                                     <option value="font-opendyslexic">Accessibile (Dyslexic)</option>
@@ -338,19 +365,23 @@
                                 </select>
                             </div>
                             <div className="space-y-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex justify-between">Testo <span>{settings.fontSize}px</span></label>
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex justify-between">Dimensione <span>{settings.fontSize}px</span></label>
                                 <input type="range" min="16" max="50" className="w-full accent-indigo-600 cursor-pointer" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} />
                             </div>
                             <div className="space-y-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Colore</label>
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Colore Testo</label>
                                 <input type="color" className="w-full h-12 cursor-pointer p-1 rounded-xl bg-slate-50 border shadow-inner" value={settings.textColor} onChange={e => setSettings({...settings, textColor: e.target.value})} />
                             </div>
                         </div>
-                        
                         <div className="pt-8 border-t">
-                            <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs uppercase tracking-[0.2em] hover:bg-black transition-all active:scale-95 disabled:opacity-20 flex items-center justify-center gap-2 shadow-lg">
-                                🖨️ Esporta PDF
+                            <button 
+                                onClick={() => window.print()} 
+                                disabled={pages.length === 0} 
+                                className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs uppercase tracking-[0.2em] hover:bg-black shadow-lg flex items-center justify-center gap-2 transition-transform active:scale-95"
+                            >
+                                🖨️ STAMPA / SALVA PDF
                             </button>
+                            <p className="text-[9px] text-slate-400 text-center mt-3 uppercase tracking-tighter">Stampa tutte le {pages.length} pagine</p>
                         </div>
                     </aside>
                 </div>
