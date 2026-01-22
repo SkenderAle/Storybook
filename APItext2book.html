@@ -16,7 +16,6 @@
     
     @page { size: landscape; margin: 0; }
     
-    /* Impedisce interferenze tra vista web e vista stampa */
     #print-container { display: none !important; }
 
     @media print {
@@ -119,8 +118,16 @@
 
       const fileInputRef = useRef(null);
 
+      // Accesso sicuro all'API Key per evitare "process is not defined"
+      const getApiKey = () => {
+        try {
+          return (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
+        } catch (e) {
+          return '';
+        }
+      };
+
       useEffect(() => {
-        // Se siamo in AI Studio e la chiave è già presente, nascondi il modale
         const checkKey = async () => {
           if (window.aistudio?.hasSelectedApiKey) {
             const ok = await window.aistudio.hasSelectedApiKey();
@@ -132,27 +139,36 @@
 
       const handleKeySelection = async () => {
         try {
-          // Tenta di aprire il selettore se disponibile
           if (window.aistudio?.openSelectKey) {
             await window.aistudio.openSelectKey();
           }
         } catch (e) {
-          console.warn("Selettore non disponibile, procedo comunque.");
+          console.warn("Selettore non disponibile.");
         }
-        // Procediamo sempre per evitare blocchi dell'interfaccia
         setShowKeyModal(false);
-        setStatus("Verifica API Key completata.");
+        setStatus("Verifica API Key...");
+      };
+
+      const handleExport = () => {
+        const project = { title, author, fullText, pages, settings, numScenes };
+        const data = JSON.stringify(project, null, 2);
+        const blob = new Blob([data], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${title.replace(/\s+/g, '_') || 'MioLibro'}.json`;
+        link.click();
       };
 
       const handleAnalyze = async () => {
         if (!fullText.trim()) return;
         setLoading(true);
-        setStatus("L'AI sta dividendo la tua storia...");
+        setStatus("Analisi della storia...");
         try {
-          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+          const ai = new GoogleGenAI({ apiKey: getApiKey() });
           const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Dividi questa storia in esattamente ${numScenes} scene brevi. Rispondi SOLO con JSON. TITOLO: ${title}. TESTO: ${fullText}`,
+            contents: `Dividi la storia in ${numScenes} scene brevi. Rispondi in JSON. TITOLO: ${title}. TESTO: ${fullText}`,
             config: { 
               responseMimeType: "application/json",
               responseSchema: {
@@ -167,14 +183,14 @@
           });
           const scenes = JSON.parse(response.text);
           setPages([
-            { id: 'cover', imageUrl: '', text: '', imagePrompt: `Copertina artistica per un libro intitolato: ${title}`, styleId: STYLES[0].id },
+            { id: 'cover', imageUrl: '', text: '', imagePrompt: `Copertina per: ${title}`, styleId: STYLES[0].id },
             ...scenes.map(s => ({ 
               id: Math.random().toString(36).substr(2, 9), 
               imageUrl: '', text: s.text, imagePrompt: s.imagePrompt, styleId: STYLES[0].id 
             }))
           ]);
           setCurrentIndex(0);
-          setStatus("Storyboard pronto!");
+          setStatus("Storyboard completato!");
         } catch (err) { 
           setStatus("Errore: " + err.message); 
         } finally { setLoading(false); }
@@ -182,9 +198,10 @@
 
       const handleGenerateImage = async (idx) => {
         setGeneratingId(pages[idx].id);
-        setStatus("Generazione immagine in corso...");
+        setStatus("Generazione immagine...");
         try {
-          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+          // Creazione nuova istanza per ogni chiamata come da regole
+          const ai = new GoogleGenAI({ apiKey: getApiKey() });
           const style = STYLES.find(s => s.id === pages[idx].styleId) || STYLES[0];
           const response = await ai.models.generateContent({
             model: 'gemini-3-pro-image-preview',
@@ -197,14 +214,14 @@
             const updated = [...pages];
             updated[idx].imageUrl = `data:image/png;base64,${imgPart.inlineData.data}`;
             setPages(updated);
-            setStatus("Immagine creata con successo!");
+            setStatus("Immagine generata!");
           }
         } catch (err) { 
           if (err.message?.includes("Requested entity was not found")) {
-            setStatus("Configurazione Billing mancante.");
+            setStatus("Billing non configurato. Re-inserisci chiave.");
             setShowKeyModal(true);
           } else {
-            setStatus("Errore: " + err.message.substring(0, 30));
+            setStatus("Errore: " + err.message.substring(0, 40));
           }
         } finally { setGeneratingId(null); }
       };
@@ -212,20 +229,20 @@
       return html`
         <div className="flex h-screen w-full font-andika relative bg-slate-100 overflow-hidden">
           
-          <!-- OVERLAY API KEY -->
+          <!-- MODALE API KEY -->
           ${showKeyModal && html`
             <div className="fixed inset-0 z-[100] bg-slate-900/90 flex items-center justify-center p-6 backdrop-blur-md">
               <div className="max-w-md w-full bg-white rounded-3xl p-10 shadow-2xl text-center">
                 <div className="text-6xl mb-6">🔑</div>
-                <h2 className="text-2xl font-black mb-4">Configura la tua API Key</h2>
+                <h2 className="text-2xl font-black mb-4">Configurazione API</h2>
                 <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-                  Per utilizzare la generazione di immagini ad alta qualità, devi collegare la tua chiave personale di Google AI Studio (progetto con fatturazione attiva).
+                  Per generare immagini di alta qualità, è necessaria un'API Key personale con fatturazione attiva su Google Cloud.
                 </p>
-                <button onClick=${handleKeySelection} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl">
+                <button onClick=${handleKeySelection} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest hover:bg-indigo-700 shadow-xl transition-all">
                   Seleziona API Key
                 </button>
-                <div className="mt-8 pt-4 border-t text-[10px] text-indigo-400">
-                  <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline">Dettagli Fatturazione Google</a>
+                <div className="mt-8 pt-4 border-t">
+                  <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-[10px] text-indigo-400 underline uppercase font-bold">Documentazione Billing</a>
                 </div>
               </div>
             </div>
@@ -235,36 +252,38 @@
           <aside className="no-print w-80 bg-white border-r shadow-2xl z-50 flex flex-col">
             <div className="p-6 bg-indigo-950 text-white flex justify-between items-center">
               <span className="text-xl font-amatic font-bold uppercase tracking-widest">StoryVisualizer</span>
-              <button onClick=${()=>setShowKeyModal(true)} className="text-[10px] bg-white/20 px-2 py-1 rounded">KEY</button>
+              <button onClick=${()=>setShowKeyModal(true)} className="text-[10px] bg-white/20 px-2 py-1 rounded hover:bg-white/40">KEY</button>
             </div>
             
             <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar">
               <div className="space-y-4">
                 <input placeholder="Titolo" value=${title} onChange=${e=>setTitle(e.target.value)} className="w-full p-3 border rounded-xl text-sm font-bold bg-slate-50 focus:ring-2 ring-indigo-500 outline-none" />
                 <input placeholder="Autore" value=${author} onChange=${e=>setAuthor(e.target.value)} className="w-full p-3 border rounded-xl text-sm bg-slate-50 focus:ring-2 ring-indigo-500 outline-none" />
-                <textarea placeholder="Scrivi la storia..." value=${fullText} onChange=${e=>setFullText(e.target.value)} className="w-full h-40 p-3 border rounded-xl text-xs bg-slate-50 resize-none focus:ring-2 ring-indigo-500 outline-none" />
+                <textarea placeholder="Inserisci la tua storia..." value=${fullText} onChange=${e=>setFullText(e.target.value)} className="w-full h-40 p-3 border rounded-xl text-xs bg-slate-50 resize-none focus:ring-2 ring-indigo-500 outline-none" />
                 
                 <div className="flex justify-between items-center px-1">
-                  <span className="text-[10px] font-black text-slate-300 uppercase">Pagine: ${numScenes}</span>
+                  <span className="text-[10px] font-black text-slate-300 uppercase">Scene: ${numScenes}</span>
                   <input type="range" min="3" max="15" value=${numScenes} onChange=${e=>setNumScenes(Number(e.target.value))} className="w-24 accent-indigo-600" />
                 </div>
 
-                <button onClick=${handleAnalyze} disabled=${loading || !fullText.trim()} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 disabled:opacity-50">
+                <button onClick=${handleAnalyze} disabled=${loading || !fullText.trim()} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors">
                   ${loading ? 'Elaborazione...' : 'Crea Storyboard'}
                 </button>
               </div>
 
               <div className="pt-6 border-t grid grid-cols-2 gap-3">
-                <button onClick=${()=>fileInputRef.current.click()} className="py-2.5 bg-slate-100 rounded-xl text-[10px] font-black uppercase hover:bg-slate-200">Importa JSON</button>
+                <button onClick=${handleExport} className="py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-50 hover:border-indigo-200 transition-all">Esporta JSON</button>
+                <button onClick=${()=>fileInputRef.current.click()} className="py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-50 hover:border-indigo-200 transition-all">Importa JSON</button>
                 <input type="file" ref=${fileInputRef} onChange=${(e)=>{
                   const file = e.target.files[0];
+                  if(!file) return;
                   const reader = new FileReader();
                   reader.onload = (ev) => {
                     const data = JSON.parse(ev.target.result);
-                    setTitle(data.title); setAuthor(data.author); setPages(data.pages); setCurrentIndex(0);
+                    setTitle(data.title || ''); setAuthor(data.author || ''); setPages(data.pages || []); setFullText(data.fullText || ''); setCurrentIndex(0);
                   };
                   reader.readAsText(file);
-                }} className="hidden" />
+                }} className="hidden" accept=".json" />
               </div>
             </div>
           </aside>
@@ -273,26 +292,24 @@
           <main className="no-print flex-1 flex flex-col items-center justify-center p-8 relative">
             <div className="flex items-center gap-8 mb-10 z-40">
               <button disabled=${currentIndex === 0 || !pages.length} onClick=${()=>setCurrentIndex(currentIndex-1)} className="w-14 h-14 bg-white rounded-full shadow-lg border hover:scale-110 disabled:opacity-20 transition-all text-xl">❮</button>
-              <div className="bg-white/90 px-10 py-3 rounded-full border shadow-sm text-xs font-black uppercase text-indigo-900">
+              <div className="bg-white/90 px-10 py-3 rounded-full border shadow-sm text-xs font-black uppercase text-indigo-900 tracking-widest">
                 ${pages.length ? (currentIndex === 0 ? 'Copertina' : `Pagina ${currentIndex}`) : 'Pronto a creare?'}
               </div>
               <button disabled=${currentIndex === pages.length-1 || !pages.length} onClick=${()=>setCurrentIndex(currentIndex+1)} className="w-14 h-14 bg-white rounded-full shadow-lg border hover:scale-110 disabled:opacity-20 transition-all text-xl">❯</button>
             </div>
 
             ${pages.length > 0 ? html`
-              <div className="relative w-full max-w-5xl aspect-[1.6/1] bg-white rounded-2xl shadow-2xl flex overflow-hidden">
+              <div className="relative w-full max-w-5xl aspect-[1.6/1] bg-white rounded-2xl shadow-2xl flex overflow-hidden ring-1 ring-black/5">
                 <div className="book-spine" />
                 
-                <!-- SX: IMMAGINE -->
                 <div className="w-1/2 h-full bg-slate-50 border-r-2 flex items-center justify-center p-12 overflow-hidden">
                   ${generatingId === pages[currentIndex].id ? html`
-                    <div className="w-20 h-20 shimmer rounded-full" />
+                    <div className="w-24 h-24 shimmer rounded-full" />
                   ` : pages[currentIndex].imageUrl ? html`
                     <img src=${pages[currentIndex].imageUrl} className="max-w-full max-h-full object-contain rounded-lg shadow-xl" />
                   ` : html`<div className="opacity-10 text-9xl">🎨</div>`}
                 </div>
 
-                <!-- DX: TESTO -->
                 <div className="w-1/2 h-full bg-white flex flex-col items-center justify-center p-16 text-center">
                   ${currentIndex === 0 ? html`
                     <div className="space-y-6">
@@ -313,43 +330,50 @@
                   `}
                 </div>
               </div>
-            ` : html`<div className="opacity-5 text-[15rem]">📖</div>`}
+            ` : html`<div className="opacity-5 text-[15rem] animate-pulse">📖</div>`}
 
-            ${status && html`<div className="absolute bottom-8 bg-slate-900 text-white px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest">${status}</div>`}
+            ${status && html`<div className="absolute bottom-8 bg-slate-900/90 text-white px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest animate-fade-in shadow-2xl">${status}</div>`}
           </main>
 
           <!-- SIDEBAR DX -->
-          <aside className="no-print w-80 bg-white border-l shadow-2xl z-50 flex flex-col p-6 space-y-8">
-            <div className="text-center"><h3 className="text-[10px] font-black text-slate-300 uppercase">Editor</h3></div>
+          <aside className="no-print w-80 bg-white border-l shadow-2xl z-50 flex flex-col p-6 space-y-8 overflow-y-auto custom-scrollbar">
+            <div className="text-center"><h3 className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Personalizza</h3></div>
             ${pages.length > 0 ? html`
               <div className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-[11px] font-black uppercase text-indigo-900">Stile Artistico</label>
+                  <label className="text-[11px] font-black uppercase text-indigo-900">Stile Immagine</label>
                   <select value=${pages[currentIndex].styleId} onChange=${e=>{
                     const updated = [...pages]; updated[currentIndex].styleId = e.target.value; setPages(updated);
                   }} className="w-full p-3 border rounded-xl text-xs font-bold bg-slate-50 outline-none">
                     ${STYLES.map(s => html`<option key=${s.id} value=${s.id}>${s.icon} ${s.label}</option>`)}
                   </select>
                 </div>
+
+                <div className="space-y-2">
+                  <label className="text-[11px] font-black uppercase text-indigo-900">Prompt Immagine</label>
+                  <textarea value=${pages[currentIndex].imagePrompt} onChange=${e=>{
+                    const updated = [...pages]; updated[currentIndex].imagePrompt = e.target.value; setPages(updated);
+                  }} className="w-full h-24 p-3 border rounded-xl text-[10px] bg-slate-50 resize-none outline-none focus:ring-2 ring-indigo-500" />
+                </div>
                 
-                <button onClick=${()=>handleGenerateImage(currentIndex)} disabled=${generatingId !== null} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-indigo-700 transition-all">
-                  Disegna Pagina
+                <button onClick=${()=>handleGenerateImage(currentIndex)} disabled=${generatingId !== null} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">
+                  Genera Immagine
                 </button>
 
                 <div className="space-y-4 pt-6 border-t">
-                  <label className="text-[11px] font-black uppercase text-indigo-900">Font</label>
+                  <label className="text-[11px] font-black uppercase text-indigo-900">Font Testo</label>
                   <select value=${settings.fontFamily} onChange=${e=>setSettings({...settings, fontFamily: e.target.value})} className="w-full p-3 border rounded-xl text-xs bg-slate-50 outline-none">
                     ${FONTS.map(f => html`<option key=${f.value} value=${f.value}>${f.label}</option>`)}
                   </select>
                   <input type="range" min="16" max="42" value=${settings.fontSize} onChange=${e=>setSettings({...settings, fontSize: Number(e.target.value)})} className="w-full accent-indigo-600" />
                 </div>
 
-                <button onClick=${()=>window.print()} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">Stampa PDF</button>
+                <button onClick=${()=>window.print()} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">Salva PDF</button>
               </div>
-            ` : html`<div className="text-center opacity-30 text-xs py-20">Analizza la storia per iniziare.</div>`}
+            ` : html`<div className="text-center opacity-30 text-xs py-20 italic">Configura lo storyboard per modificare le pagine.</div>`}
           </aside>
 
-          <!-- AREA STAMPA (NASCOSTA NEL WEB) -->
+          <!-- AREA STAMPA -->
           <div id="print-container">
             ${pages.map((p, idx) => html`
               <div key=${p.id} className="page-break">
@@ -358,8 +382,8 @@
                 </div>
                 <div className="w-1/2 h-full flex flex-col items-center justify-center text-center p-24">
                   ${idx === 0 ? html`
-                    <h1 className="font-playfair text-[80px] mb-8 leading-tight">${title || 'Mio Libro'}</h1>
-                    <p className="font-patrick text-4xl text-slate-400 italic">${author || 'Anonimo'}</p>
+                    <h1 className="font-playfair text-[80px] mb-8 leading-tight">${title}</h1>
+                    <p className="font-patrick text-4xl text-slate-400 italic">${author}</p>
                   ` : html`
                     <div className=${settings.fontFamily} style=${{ fontSize: `${settings.fontSize}px`, whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>
                       ${p.text}
