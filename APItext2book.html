@@ -121,19 +121,26 @@
             const fileInputRef = useRef(null);
 
             useEffect(() => {
-                const checkKey = async () => {
+                const checkKeyStatus = async () => {
                     if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
                         const selected = await window.aistudio.hasSelectedApiKey();
                         setHasKey(selected);
                     }
                 };
-                checkKey();
+                checkKeyStatus();
             }, []);
 
             const handleSelectKey = async () => {
                 if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-                    await window.aistudio.openSelectKey();
-                    setHasKey(true);
+                    try {
+                        await window.aistudio.openSelectKey();
+                        setHasKey(true);
+                        setStatus("Chiave configurata con successo!");
+                    } catch (e) {
+                        setStatus("Impossibile aprire la selezione chiave.");
+                    }
+                } else {
+                    alert("Funzione di selezione chiave disponibile solo nell'ambiente AI Studio.");
                 }
             };
 
@@ -203,10 +210,13 @@
                     });
                     
                     let base64 = "";
-                    for (const part of response.candidates[0].content.parts) {
-                        if (part.inlineData) {
-                            base64 = `data:image/png;base64,${part.inlineData.data}`;
-                            break;
+                    const candidates = response.candidates || [];
+                    if (candidates.length > 0 && candidates[0].content && candidates[0].content.parts) {
+                        for (const part of candidates[0].content.parts) {
+                            if (part.inlineData) {
+                                base64 = `data:image/png;base64,${part.inlineData.data}`;
+                                break;
+                            }
                         }
                     }
 
@@ -214,7 +224,7 @@
                         updatePageData(pageIndex, 'imageUrl', base64);
                         setStatus('Immagine creata!');
                     } else {
-                        throw new Error("L'AI non ha prodotto dati immagine.");
+                        throw new Error("L'AI non ha prodotto dati immagine. Verifica i tuoi crediti e permessi.");
                     }
                 } catch (err) { 
                     handleApiError(err, "Immagine");
@@ -223,12 +233,13 @@
 
             const handleApiError = (err, context) => {
                 console.error(err);
-                if (err.message.includes("Requested entity was not found")) {
+                const msg = err.message || "";
+                if (msg.includes("Requested entity was not found") || msg.includes("API key not valid")) {
                     setHasKey(false);
-                    setStatus("Errore: Chiave API non valida o non trovata. Per favore riconnettila.");
+                    setStatus("Errore: Chiave API non valida. Seleziona un progetto con billing attivo.");
                     handleSelectKey();
                 } else {
-                    setStatus(`Errore ${context}: ${err.message}`);
+                    setStatus(`Errore ${context}: ${msg}`);
                 }
             };
 
@@ -238,9 +249,10 @@
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = `${title || 'mio-libro'}.json`;
+                const safeTitle = (title || 'mio-libro').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                link.download = `${safeTitle}.json`;
                 link.click();
-                setStatus('Progetto esportato!');
+                setStatus('Progetto esportato correttamente!');
             };
 
             const importFromJson = (event) => {
@@ -261,6 +273,7 @@
                     } catch (err) { alert("Errore nel caricamento del file JSON."); }
                 };
                 reader.readAsText(file);
+                event.target.value = ""; // Reset per permettere ricaricamento stesso file
             };
 
             const updatePageData = (index, field, value) => {
@@ -322,18 +335,18 @@
                                 <input type="file" ref={fileInputRef} onChange={importFromJson} className="hidden" accept=".json" />
                             </div>
 
-                            {/* API KEY CONFIG */}
+                            {/* API KEY CONFIG (BYOK) */}
                             <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-100 space-y-3">
                                 <label className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex justify-between items-center">
                                     <span>Stato API</span>
-                                    {hasKey ? <span className="text-green-600">CONNESSO ✅</span> : <span className="text-red-500">DA COLLEGARE ❌</span>}
+                                    {hasKey ? <span className="text-green-600">CONNESSO ✅</span> : <span className="text-red-500">DA CONFIGURARE ❌</span>}
                                 </label>
                                 <button onClick={handleSelectKey} className="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 shadow-md transition-all active:scale-95">
-                                    {hasKey ? "Cambia Progetto API" : "🔑 Configura API Key"}
+                                    🔑 Configura API Key
                                 </button>
                                 <p className="text-[8px] text-indigo-700/70 leading-tight">
-                                    Usa il tuo account Google Cloud. I costi saranno fatturati direttamente al tuo progetto. 
-                                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline ml-1 font-bold">Info Billing</a>
+                                    Seleziona un progetto con fatturazione attiva.
+                                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline ml-1 font-bold block mt-1">Documentazione Billing →</a>
                                 </p>
                             </div>
                             
