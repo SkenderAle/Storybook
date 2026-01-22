@@ -52,7 +52,7 @@
             pointer-events: none;
         }
 
-        /* Regole Stampa migliorate */
+        /* Regole Stampa */
         .print-only { display: none; }
 
         @media print {
@@ -238,19 +238,25 @@
                         inlineData: { mimeType: 'image/jpeg', data: p.imageUrl.split(',')[1] }
                     }));
                     
-                    const systemPrompt = `Sei uno scrittore di libri illustrati. Scrivi un testo in ITALIANO basandoti sulla sequenza di immagini fornite.
+                    const systemPrompt = `Sei uno scrittore di libri illustrati. Ti fornirò una sequenza di immagini.
+                    La PRIMA immagine è la COPERTINA del libro.
+                    Le immagini SUCCESSIVE sono le pagine interne (Pagina 1, Pagina 2, ecc.).
+                    
                     Titolo del libro: ${title}.
                     
-                    REGOLE:
+                    REGOLE DI RISPOSTA:
                     1. Restituisci un ARRAY JSON di stringhe.
                     2. La lunghezza dell'array deve essere esattamente di ${pages.length} elementi.
-                    3. L'elemento all'indice 0 (copertina) DEVE essere una stringa vuota "".
-                    4. Gli elementi successivi (indice 1, 2, 3...) contengono il testo narrativo per l'immagine corrispondente.
+                    3. L'elemento all'indice 0 (corrispondente alla COPERTINA) DEVE essere una stringa vuota "". Non narrare la copertina.
+                    4. L'elemento all'indice 1 deve contenere il testo narrativo basato sulla SECONDA immagine fornita.
+                    5. L'elemento all'indice 2 deve contenere il testo narrativo basato sulla TERZA immagine fornita, e così via.
+                    
+                    IMPORTANTE: Assicurati che il testo all'indice 'i' descriva correttamente l'immagine all'indice 'i' della sequenza. Non saltare immagini e non sfasare il racconto.
                     
                     STILE:
                     ${customInstructions || 'Scrivi una favola magica per bambini, con un linguaggio poetico e sognante.'}
 
-                    Rispondi SOLO con l'array JSON ["" , "testo 1", "testo 2", ...].`;
+                    Rispondi SOLO con l'array JSON ["" , "testo per immagine 2", "testo per immagine 3", ...].`;
 
                     const response = await ai.models.generateContent({
                         model: 'gemini-3-flash-preview',
@@ -320,7 +326,6 @@
 
             const handlePrint = () => {
                 if (pages.length === 0) return;
-                // Piccolo ritardo per assicurarsi che il focus sia corretto
                 setTimeout(() => {
                     window.print();
                 }, 100);
@@ -381,12 +386,10 @@
             return (
                 <div className="flex flex-col md:flex-row h-screen relative" onDragOver={e => { e.preventDefault(); setIsDraggingOver(true); }} onDragLeave={() => setIsDraggingOver(false)} onDrop={handleGlobalDrop}>
                     
-                    {/* Contenitore invisibile dedicato solo alla stampa */}
                     <div className="print-only print-container">
                         {pages.map((p, i) => <PageView key={p.id} page={p} index={i} isPrint={true} />)}
                     </div>
 
-                    {/* Sidebar Sinistra */}
                     <aside className="no-print w-full md:w-80 bg-white border-r flex flex-col z-50 shadow-xl overflow-hidden">
                         <div className="p-6 border-b bg-indigo-50/30">
                             <h2 className="text-3xl font-amatic text-indigo-700 mb-0.5 flex items-center gap-2 tracking-widest uppercase">✨ StoryStudio</h2>
@@ -463,7 +466,6 @@
                         </div>
                     </aside>
 
-                    {/* Area di Anteprima Centrale */}
                     <main className="no-print flex-1 flex flex-col items-center justify-center p-6 lg:p-12 relative bg-slate-100 overflow-hidden">
                         <div className="absolute top-8 flex items-center gap-6 z-40">
                             <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-4 rounded-full shadow-xl hover:scale-110 disabled:opacity-20 border border-slate-100 transition-transform active:scale-95" disabled={currentIndex === 0}>❮</button>
@@ -483,7 +485,6 @@
                         )}
                     </main>
 
-                    {/* Sidebar Destra Design */}
                     <aside className="no-print w-full md:w-72 bg-white border-l p-8 flex flex-col z-50 shadow-xl">
                         <h3 className="font-amatic text-2xl font-bold border-b pb-4 mb-8 text-slate-800 uppercase tracking-widest">Stile & Export</h3>
                         
