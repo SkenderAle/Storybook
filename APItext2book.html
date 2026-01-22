@@ -92,16 +92,12 @@
         import { GoogleGenAI, Type } from "@google/genai";
 
         const STYLES = [
-            { id: 'realistic', label: 'Realistico', icon: '📸', prompt: 'photorealistic, cinematic lighting, 8k, masterpiece' },
             { id: 'watercolor', label: 'Acquerello', icon: '💧', prompt: 'soft watercolor painting, storybook style' },
             { id: 'manga', label: 'Manga / Anime', icon: '🇯🇵', prompt: 'clean anime style, vibrant' },
             { id: 'comic', label: 'Fumetto Classico', icon: '🎨', prompt: 'retro comic book style, bold ink' },
-            { id: 'pixelart', label: 'Pixel Art', icon: '👾', prompt: '16-bit retro pixel art' },
-            { id: 'oilpainting', label: 'Olio su Tela', icon: '🖼️', prompt: 'oil painting, thick brushstrokes' },
-            { id: '3drender', label: '3D Render (Pixar)', icon: '🧸', prompt: 'pixar animation style 3d render' },
-            { id: 'pencil', label: 'Schizzo a Matita', icon: '✏️', prompt: 'detailed pencil sketch' },
-            { id: 'popart', label: 'Pop Art', icon: '🍭', prompt: 'bold pop art style' },
-            { id: 'fairytale', label: 'Fiabesco / Magico', icon: '🦄', prompt: 'enchanted fairytale illustration' }
+            { id: 'fairytale', label: 'Fiabesco', icon: '🦄', prompt: 'enchanted fairytale illustration' },
+            { id: 'oilpainting', label: 'Olio su Tela', icon: '🖼️', prompt: 'oil painting style' },
+            { id: '3drender', label: '3D Render', icon: '🧸', prompt: 'pixar animation style 3d render' }
         ];
 
         const App = () => {
@@ -113,7 +109,7 @@
             const [isAnalyzing, setIsAnalyzing] = useState(false);
             const [isGeneratingImg, setIsGeneratingImg] = useState(null); 
             const [status, setStatus] = useState('');
-            const [quotaError, setQuotaError] = useState(false);
+            const [quotaZeroError, setQuotaZeroError] = useState(false);
             const [numScenes, setNumScenes] = useState(6);
             
             const [manualKey, setManualKey] = useState(localStorage.getItem('gemini_api_key') || '');
@@ -129,61 +125,33 @@
                 localStorage.setItem('gemini_api_key', manualKey);
             }, [manualKey]);
 
-            const callWithRetry = async (fn, retries = 3, initialDelay = 12000) => {
-                let currentDelay = initialDelay;
-                for (let i = 0; i < retries; i++) {
-                    try {
-                        setQuotaError(false);
-                        return await fn();
-                    } catch (err) {
-                        const msg = err.message || "";
-                        console.error(`Tentativo ${i+1} fallito:`, err);
-                        
-                        // Rilevamento specifico limit: 0
-                        if (msg.includes("limit: 0")) {
-                            setQuotaError(true);
-                            throw new Error("La tua quota per le immagini è 0. Devi attivare la fatturazione (Billing) su Google Cloud.");
-                        }
-
-                        const isRateLimit = msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted');
-
-                        if (isRateLimit && i < retries - 1) {
-                            setStatus(`Limite raggiunto. Attesa di ${currentDelay/1000}s...`);
-                            await new Promise(res => setTimeout(res, currentDelay));
-                            currentDelay *= 1.5;
-                            continue;
-                        }
-                        throw err;
+            const callAI = async (fn) => {
+                try {
+                    setQuotaZeroError(false);
+                    return await fn();
+                } catch (err) {
+                    const msg = err.message || "";
+                    if (msg.includes("limit: 0") || msg.includes("RESOURCE_EXHAUSTED")) {
+                        if (msg.includes("limit: 0")) setQuotaZeroError(true);
+                        throw new Error("Quota insufficiente o servizio disabilitato.");
                     }
+                    throw err;
                 }
-            };
-
-            const cleanJsonResponse = (text) => {
-                if (!text) return "";
-                let cleaned = text.trim();
-                if (cleaned.startsWith("```")) {
-                    cleaned = cleaned.replace(/^```(?:json)?/, "").replace(/```$/, "");
-                }
-                return cleaned.trim();
             };
 
             const analyzeStory = async () => {
                 const key = manualKey || process.env.API_KEY;
-                if (!key) return alert("Inserisci una API Key.");
-                if (!fullText.trim()) return alert("Inserisci il testo della storia.");
-
+                if (!key) return alert("Per favore, inserisci la tua API Key Gemini nella barra laterale.");
                 setIsAnalyzing(true);
-                setStatus('Analisi con Gemini 3 Flash...');
+                setStatus('Analisi racconto in corso...');
                 try {
                     const ai = new GoogleGenAI({ apiKey: key });
-                    const prompt = `Dividi questa storia in esattamente ${numScenes} scene. 
-                    Restituisci solo un JSON array di oggetti con campi "displayText" (italiano) e "imagePrompt" (inglese, descrittivo).
-                    TITOLO: ${title}
-                    TESTO: ${fullText}`;
-
-                    const response = await callWithRetry(() => ai.models.generateContent({
+                    const response = await callAI(() => ai.models.generateContent({
                         model: 'gemini-3-flash-preview',
-                        contents: prompt,
+                        contents: `Dividi questa storia in ${numScenes} scene. 
+                        Restituisci solo JSON: [{"displayText": "testo", "imagePrompt": "descrizione visiva inglese"}]
+                        TITOLO: ${title}
+                        TESTO: ${fullText}`,
                         config: { 
                             responseMimeType: "application/json",
                             responseSchema: {
@@ -200,9 +168,10 @@
                         }
                     }));
 
-                    const scenes = JSON.parse(cleanJsonResponse(response.text));
-                    const newPages = [
-                        { id: 'cover', imageUrl: '', text: '', imagePrompt: 'A beautiful book cover for: ' + title, imageScale: 1, styleId: STYLES[0].id },
+                    const scenes = JSON.parse(response.text);
+
+                    setPages([
+                        { id: 'cover', imageUrl: '', text: '', imagePrompt: 'Splendid book cover for: ' + title, imageScale: 1, styleId: STYLES[0].id },
                         ...scenes.map((s) => ({
                             id: Math.random().toString(36),
                             imageUrl: '',
@@ -211,31 +180,28 @@
                             imageScale: 1,
                             styleId: STYLES[0].id
                         }))
-                    ];
-                    setPages(newPages);
+                    ]);
                     setCurrentIndex(0);
-                    setStatus('Storyboard pronto!');
+                    setStatus('Storyboard completato!');
                 } catch (err) { 
-                    setStatus(`Errore: ${err.message}`); 
+                    setStatus(`Errore analisi: ${err.message}`); 
                 } finally { setIsAnalyzing(false); }
             };
 
             const generateImage = async (pageIndex) => {
                 const key = manualKey || process.env.API_KEY;
-                if (!key) return alert("API Key mancante.");
+                if (!key) return alert("Inserisci la tua API Key per generare immagini.");
                 
                 const page = pages[pageIndex];
                 const pageStyle = STYLES.find(s => s.id === page.styleId) || STYLES[0];
                 
                 setIsGeneratingImg(page.id);
-                setStatus(`Creazione immagine in corso...`);
+                setStatus(`Generazione immagine...`);
                 try {
                     const ai = new GoogleGenAI({ apiKey: key });
-                    const finalPrompt = `${page.imagePrompt}. Style: ${pageStyle.prompt}. High quality illustration.`;
-                    
-                    const response = await callWithRetry(() => ai.models.generateContent({
+                    const response = await callAI(() => ai.models.generateContent({
                         model: 'gemini-2.5-flash-image',
-                        contents: finalPrompt,
+                        contents: `${page.imagePrompt}. Style: ${pageStyle.prompt}. High quality illustration for kids book.`,
                         config: { imageConfig: { aspectRatio: "1:1" } }
                     }));
                     
@@ -250,13 +216,53 @@
 
                     if (base64) {
                         updatePageData(pageIndex, 'imageUrl', base64);
-                        setStatus('Immagine generata!');
+                        setStatus('Immagine creata!');
                     } else {
-                        throw new Error("Risposta vuota dall'AI.");
+                        throw new Error("L'AI non ha prodotto dati immagine.");
                     }
                 } catch (err) { 
-                    setStatus(`Errore: ${err.message}`); 
+                    setStatus(`Errore immagine: ${err.message}`); 
                 } finally { setIsGeneratingImg(null); }
+            };
+
+            const exportToJson = () => {
+                const data = {
+                    title,
+                    author,
+                    fullText,
+                    numScenes,
+                    settings,
+                    pages
+                };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${title || 'mio-libro'}.json`;
+                link.click();
+                setStatus('Progetto esportato con successo!');
+            };
+
+            const importFromJson = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        setTitle(data.title || '');
+                        setAuthor(data.author || '');
+                        setFullText(data.fullText || '');
+                        setNumScenes(data.numScenes || 6);
+                        setSettings(data.settings || settings);
+                        setPages(data.pages || []);
+                        setCurrentIndex(0);
+                        setStatus('Progetto caricato!');
+                    } catch (err) {
+                        alert("Errore nel caricamento del file JSON.");
+                    }
+                };
+                reader.readAsText(file);
             };
 
             const updatePageData = (index, field, value) => {
@@ -264,33 +270,33 @@
             };
 
             const PageView = ({ page, index, isPrint = false }) => (
-                <div className={`flex w-full bg-white book-spread overflow-hidden relative ${isPrint ? 'print-page shadow-none border-none' : 'aspect-[1.6/1] max-w-5xl rounded-xl border'}`}>
+                <div className={`flex w-full bg-white book-spread overflow-hidden relative ${isPrint ? 'print-page shadow-none' : 'aspect-[1.6/1] max-w-5xl rounded-xl border shadow-2xl'}`}>
                     <div className="book-spine" />
-                    <div className="page-side w-1/2 h-full bg-slate-50 border-r relative flex items-center justify-center p-4 overflow-hidden">
+                    <div className="page-side w-1/2 h-full bg-slate-50 border-r relative flex items-center justify-center p-4">
                         {isGeneratingImg === page.id ? (
                             <div className="w-full h-full flex flex-col items-center justify-center space-y-4">
-                                <div className="w-16 h-16 loader-shimmer rounded-full" />
-                                <span className="text-[9px] font-black text-indigo-500 animate-pulse uppercase tracking-widest text-center">AI sta dipingendo...</span>
+                                <div className="w-12 h-12 loader-shimmer rounded-full" />
+                                <span className="text-[10px] font-black text-indigo-500 animate-pulse uppercase tracking-widest">Dipingendo...</span>
                             </div>
                         ) : page.imageUrl ? (
-                            <img src={page.imageUrl} style={{ transform: `scale(${page.imageScale || 1})` }} className="max-w-[85%] max-h-[85%] object-contain shadow-2xl rounded transition-all duration-300" alt="Illustrazione" />
+                            <img src={page.imageUrl} className="max-w-[85%] max-h-[85%] object-contain shadow-2xl rounded" alt="Pagina" />
                         ) : (
-                            <div className="text-7xl opacity-5 grayscale">📖</div>
+                            <div className="text-8xl opacity-5">🎨</div>
                         )}
                     </div>
                     <div className="page-side w-1/2 h-full bg-white relative flex flex-col items-center justify-center p-12 text-center">
                         {index === 0 ? (
                             <div className="space-y-6">
-                                <h1 className="font-playfair text-5xl text-slate-800 leading-tight">{title || "Titolo Libro"}</h1>
-                                <p className="font-patrick text-xl text-slate-400 italic">di {author || "Autore"}</p>
+                                <h1 className="font-playfair text-5xl text-slate-800 leading-tight">{title || "Il Tuo Libro"}</h1>
+                                <p className="font-patrick text-xl text-slate-400 italic">di {author || "Scrittore"}</p>
                             </div>
                         ) : (
                             <div className={`w-full ${settings.fontFamily} leading-relaxed custom-scrollbar overflow-y-auto max-h-[70%]`} style={{ fontSize: `${settings.fontSize}px`, color: settings.textColor }} contentEditable={!isPrint} suppressContentEditableWarning onBlur={(e) => updatePageData(index, 'text', e.currentTarget.innerText)}>
-                                {page.text || "Scrivi qui il testo..."}
+                                {page.text || "Scrivi il testo qui..."}
                             </div>
                         )}
-                        <div className="absolute bottom-6 w-full text-center text-[9px] font-black text-slate-200 tracking-[0.3em] uppercase">
-                            {index === 0 ? "COPERTINA" : `PAGINA ${index}`}
+                        <div className="absolute bottom-6 w-full text-center text-[9px] font-black text-slate-200 uppercase tracking-widest">
+                            {index === 0 ? "COPERTINA" : `SCENA ${index}`}
                         </div>
                     </div>
                 </div>
@@ -303,27 +309,47 @@
                     {/* SIDEBAR SINISTRA */}
                     <aside className="no-print w-72 bg-white border-r flex flex-col shadow-xl z-50">
                         <div className="p-5 border-b bg-slate-900 text-white">
-                            <h2 className="text-xl font-amatic tracking-[0.2em] uppercase">✨ StoryVisualizer</h2>
+                            <h2 className="text-xl font-amatic uppercase tracking-widest">✨ StoryVisualizer</h2>
                         </div>
                         <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar">
-                            <div className="space-y-2">
-                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Chiave API Gemini</label>
-                                <input type="password" placeholder="Incolla API Key" className="w-full p-2.5 text-xs border rounded-lg focus:ring-1 ring-indigo-400 outline-none" value={manualKey} onChange={e => setManualKey(e.target.value)} />
-                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-[8px] text-indigo-500 font-bold hover:underline block">Crea Chiave Gratuita →</a>
+                            
+                            {/* AZIONI FILE */}
+                            <div className="grid grid-cols-2 gap-2 mb-4">
+                                <button onClick={exportToJson} className="flex flex-col items-center justify-center p-3 bg-slate-100 hover:bg-slate-200 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all">
+                                    <span className="text-xl mb-1">💾</span> Esporta
+                                </button>
+                                <button onClick={() => fileInputRef.current.click()} className="flex flex-col items-center justify-center p-3 bg-slate-100 hover:bg-slate-200 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all">
+                                    <span className="text-xl mb-1">📂</span> Importa
+                                </button>
+                                <input type="file" ref={fileInputRef} onChange={importFromJson} className="hidden" accept=".json" />
                             </div>
-                            <div className="space-y-2 pt-3 border-t">
-                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Info Libro</label>
-                                <input type="text" placeholder="Titolo" className="w-full p-2.5 text-xs border rounded-lg font-bold" value={title} onChange={e => setTitle(e.target.value)} />
-                                <input type="text" placeholder="Autore" className="w-full p-2.5 text-xs border rounded-lg" value={author} onChange={e => setAuthor(e.target.value)} />
+
+                            <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-100 space-y-2">
+                                <label className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex justify-between">
+                                    <span>Chiave API Gemini</span>
+                                    <span className="text-indigo-600">SICURA 🔒</span>
+                                </label>
+                                <input type="password" placeholder="Inserisci la tua chiave" className="w-full p-2.5 text-xs border border-indigo-200 rounded-lg outline-none focus:ring-2 ring-indigo-500/20" value={manualKey} onChange={e => setManualKey(e.target.value)} />
+                                <p className="text-[8px] text-indigo-700/70 leading-tight">
+                                    Questa chiave è salvata solo nel tuo browser. L'uso verrà fatturato al <strong>tuo account Google Cloud</strong>.
+                                </p>
+                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-[8px] text-indigo-600 font-bold hover:underline block text-right">Ottieni Chiave →</a>
                             </div>
+                            
                             <div className="space-y-2 pt-3 border-t">
-                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Il tuo Racconto</label>
-                                <textarea className="w-full h-40 p-2.5 text-[11px] border rounded-lg resize-none outline-none focus:ring-1 ring-slate-300 leading-relaxed" placeholder="Incolla qui la storia..." value={fullText} onChange={e => setFullText(e.target.value)} />
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dati Libro</label>
+                                <input type="text" placeholder="Titolo del libro" className="w-full p-2.5 text-xs border rounded-lg font-bold outline-none focus:border-slate-400" value={title} onChange={e => setTitle(e.target.value)} />
+                                <input type="text" placeholder="Nome Autore" className="w-full p-2.5 text-xs border rounded-lg outline-none focus:border-slate-400" value={author} onChange={e => setAuthor(e.target.value)} />
+                            </div>
+                            
+                            <div className="space-y-2 pt-3 border-t">
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Storia Completa</label>
+                                <textarea className="w-full h-40 p-2.5 text-[11px] border rounded-lg resize-none outline-none focus:ring-1 ring-slate-200" placeholder="Incolla o scrivi qui il racconto..." value={fullText} onChange={e => setFullText(e.target.value)} />
                                 <div className="flex justify-between items-center text-[9px] font-bold text-slate-400">
-                                    <span>Pagine: {numScenes}</span>
+                                    <span>Numero Scene: {numScenes}</span>
                                     <input type="range" min="3" max="10" value={numScenes} onChange={e => setNumScenes(parseInt(e.target.value))} className="w-24 accent-slate-900" />
                                 </div>
-                                <button onClick={analyzeStory} disabled={isAnalyzing || !fullText.trim()} className="w-full py-3.5 bg-slate-900 text-white rounded-lg font-bold text-[9px] uppercase tracking-widest shadow-lg hover:bg-black transition-all active:scale-95 disabled:opacity-50">
+                                <button onClick={analyzeStory} disabled={isAnalyzing || !fullText.trim()} className="w-full py-4 bg-slate-900 text-white rounded-lg font-bold text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-50 shadow-lg mt-2">
                                     {isAnalyzing ? 'Elaborazione...' : '🧠 Crea Storyboard'}
                                 </button>
                             </div>
@@ -333,11 +359,11 @@
                     {/* AREA CENTRALE */}
                     <main className="no-print flex-1 flex flex-col items-center justify-center p-10 bg-slate-50 relative overflow-hidden">
                         <div className="absolute top-8 flex items-center gap-4 z-40">
-                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-3 rounded-full shadow hover:scale-110 active:scale-95 transition-all disabled:opacity-30 border" disabled={currentIndex === 0}>❮</button>
+                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-3 rounded-full shadow hover:scale-110 active:scale-95 disabled:opacity-30 border transition-all" disabled={currentIndex === 0}>❮</button>
                             <span className="bg-white px-8 py-2.5 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest border shadow-sm">
-                                {pages.length > 0 ? (currentIndex === 0 ? 'COPERTINA' : `SCENA ${currentIndex}`) : 'BENVENUTO'}
+                                {pages.length > 0 ? (currentIndex === 0 ? 'COPERTINA' : `SCENA ${currentIndex} / ${pages.length - 1}`) : 'NUOVO LIBRO'}
                             </span>
-                            <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-3 rounded-full shadow hover:scale-110 active:scale-95 transition-all disabled:opacity-30 border" disabled={currentIndex === pages.length - 1}>❯</button>
+                            <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-3 rounded-full shadow hover:scale-110 active:scale-95 disabled:opacity-30 border transition-all" disabled={currentIndex === pages.length - 1}>❯</button>
                         </div>
                         
                         {pages.length > 0 ? (
@@ -345,18 +371,22 @@
                         ) : (
                             <div className="text-center opacity-5 select-none flex flex-col items-center">
                                 <span className="text-[12rem]">📖</span>
-                                <p className="text-xl font-black uppercase tracking-widest mt-2">Pronto per iniziare</p>
+                                <p className="text-xl font-black uppercase tracking-widest mt-2">Pronto per scrivere</p>
                             </div>
                         )}
 
                         {status && (
-                            <div className="absolute bottom-10 px-6 py-3 bg-slate-900 text-white rounded-xl shadow-2xl text-[9px] font-black uppercase tracking-widest z-50 text-center max-w-xl animate-in slide-in-from-bottom duration-300">
+                            <div className="absolute bottom-10 px-6 py-4 bg-slate-900 text-white rounded-xl shadow-2xl text-[10px] font-black uppercase tracking-widest z-50 text-center max-w-2xl border-t-2 border-indigo-500">
                                 {status}
-                                {quotaError && (
-                                    <div className="mt-2 p-2 bg-red-500/20 border border-red-500/50 rounded text-red-200 normal-case font-medium">
-                                        ⚠️ Errore Quota: Google ha bloccato la generazione immagini (Limit 0). 
-                                        Devi collegare una carta nel piano Pay-as-you-go per sbloccare i modelli Vision.
-                                        <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline ml-1 text-white">Documentazione Billing →</a>
+                                {quotaZeroError && (
+                                    <div className="mt-3 p-3 bg-red-600/20 border border-red-500/50 rounded-lg text-red-100 normal-case font-medium text-[11px] space-y-2">
+                                        <p className="font-bold uppercase text-[10px] text-white">⚠️ Quota Immagini Disabilitata (Limit: 0)</p>
+                                        <p>Google ha bloccato questo account per la generazione di immagini. Questo accade spesso con account senza fatturazione attiva.</p>
+                                        <div className="pt-2 flex flex-wrap gap-2 justify-center">
+                                            <a href="https://console.cloud.google.com/billing" target="_blank" className="bg-white text-red-700 px-3 py-1.5 rounded-md font-bold text-[9px] uppercase shadow hover:bg-slate-100">1. Attiva Billing Google Cloud →</a>
+                                            <span className="bg-slate-800/50 px-3 py-1.5 rounded-md font-bold text-[9px] uppercase">2. Prova con VPN (USA)</span>
+                                        </div>
+                                        <p className="text-[9px] opacity-70 italic text-center w-full">Nota: Se sei l'utente dell'app, i costi saranno fatturati sulla tua carta, non su quella dell'autore dell'app.</p>
                                     </div>
                                 )}
                             </div>
@@ -366,33 +396,35 @@
                     {/* SIDEBAR DESTRA */}
                     <aside className="no-print w-72 bg-white border-l flex flex-col shadow-xl z-50">
                         <div className="p-5 border-b">
-                            <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Editor Scena</h3>
+                            <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Strumenti Scena</h3>
                         </div>
                         
                         {pages.length > 0 ? (
                             <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
                                 <div className="space-y-3">
-                                    <label className="text-[9px] font-black text-slate-800 uppercase tracking-widest block">🎨 Stile</label>
-                                    <select className="w-full p-3 text-[11px] border rounded-lg bg-slate-50 font-bold outline-none" value={pages[currentIndex].styleId} onChange={e => updatePageData(currentIndex, 'styleId', e.target.value)}>
+                                    <label className="text-[9px] font-black text-slate-800 uppercase tracking-widest block">🎨 Stile Grafico</label>
+                                    <select className="w-full p-3 text-[11px] border rounded-lg bg-slate-50 font-bold outline-none cursor-pointer" value={pages[currentIndex].styleId} onChange={e => updatePageData(currentIndex, 'styleId', e.target.value)}>
                                         {STYLES.map(style => <option key={style.id} value={style.id}>{style.icon} {style.label}</option>)}
                                     </select>
-                                    <button onClick={() => generateImage(currentIndex)} disabled={isGeneratingImg === pages[currentIndex].id} className="w-full py-4 bg-indigo-600 text-white rounded-lg font-bold text-[9px] shadow-lg hover:bg-indigo-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50">
-                                        ✨ Dipingi con AI
+                                    <button onClick={() => generateImage(currentIndex)} disabled={isGeneratingImg === pages[currentIndex].id} className="w-full py-4 bg-indigo-600 text-white rounded-lg font-bold text-[10px] shadow-lg hover:bg-indigo-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50">
+                                        ✨ Genera Illustrazione
                                     </button>
                                 </div>
                                 <div className="space-y-3 pt-5 border-t">
-                                    <label className="text-[9px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione Visiva (Prompt)</label>
+                                    <label className="text-[9px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione Scena (AI)</label>
                                     <textarea className="w-full h-32 p-3 text-[10px] bg-slate-50 border rounded-lg resize-none outline-none leading-relaxed font-medium" value={pages[currentIndex].imagePrompt} onChange={e => updatePageData(currentIndex, 'imagePrompt', e.target.value)} />
+                                    <p className="text-[8px] text-slate-400 italic">Modifica il testo sopra per cambiare i dettagli del disegno.</p>
                                 </div>
                                 <div className="space-y-3 pt-5 border-t">
-                                    <label className="text-[9px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Tipografia</label>
+                                    <label className="text-[9px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Impostazioni Testo</label>
                                     <select className="w-full p-2.5 text-[10px] border rounded-lg outline-none font-bold" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
-                                        <option value="font-patrick">A Mano</option>
-                                        <option value="font-andika">Standard</option>
-                                        <option value="font-opendyslexic">Accessibile</option>
+                                        <option value="font-patrick">Carattere a Mano</option>
+                                        <option value="font-andika">Andika (Pulito)</option>
+                                        <option value="font-opendyslexic">OpenDyslexic (Leggibilità)</option>
+                                        <option value="font-playfair">Playfair (Elegante)</option>
                                     </select>
                                     <div className="flex justify-between items-center px-1">
-                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Dimensione</span>
+                                        <span className="text-[8px] font-black text-slate-400 uppercase">Dimensione Carattere</span>
                                         <span className="text-[10px] font-bold text-indigo-600">{settings.fontSize}px</span>
                                     </div>
                                     <input type="range" min="14" max="48" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} className="w-full accent-indigo-600" />
@@ -400,11 +432,11 @@
                             </div>
                         ) : (
                             <div className="flex-1 flex flex-col items-center justify-center p-8 opacity-20 italic text-center text-xs">
-                                <p>Crea lo storyboard per sbloccare l'arte.</p>
+                                <p>Crea lo storyboard per iniziare a personalizzare le illustrazioni.</p>
                             </div>
                         )}
                         <div className="p-5 border-t bg-slate-50/50">
-                            <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full py-4 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase tracking-widest shadow-xl">🖨️ Stampa / PDF</button>
+                            <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full py-4 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-black transition-all">🖨️ Esporta Libro in PDF</button>
                         </div>
                     </aside>
                 </div>
