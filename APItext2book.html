@@ -4,15 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StoryVisualizer AI - Il Tuo Libro Illustrato</title>
+    <title>StoryVisualizer AI - Pro</title>
     
-    <!-- Dipendenze Esterne -->
+    <!-- Dipendenze -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/opendyslexic@2/opendyslexic.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Andika&family=Amatic+SC:wght@700&family=Playfair+Display:ital,wght@0,700;1,700&display=swap" rel="stylesheet">
 
-    <!-- Import Map per React e Gemini SDK -->
     <script type="importmap">
     {
       "imports": {
@@ -24,7 +23,6 @@
     </script>
 
     <style>
-        /* Font personalizzati */
         .font-opendyslexic { font-family: 'OpenDyslexic', sans-serif; }
         .font-patrick { font-family: 'Patrick Hand', cursive; }
         .font-andika { font-family: 'Andika', sans-serif; }
@@ -39,7 +37,6 @@
           overflow: hidden;
         }
 
-        /* Effetto Libro */
         .book-spread {
             filter: drop-shadow(0 30px 60px rgba(0, 0, 0, 0.15));
             transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
@@ -53,16 +50,12 @@
         .book-spine {
             background: linear-gradient(to right, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.05) 100%);
             width: 40px;
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: 50%;
+            position: absolute; top: 0; bottom: 0; left: 50%;
             transform: translateX(-50%);
             z-index: 20;
             pointer-events: none;
         }
 
-        /* Shimmer Loader */
         .loader-shimmer {
             background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
             background-size: 200% 100%;
@@ -73,7 +66,6 @@
             100% { background-position: -200% 0; }
         }
 
-        /* Print Styles */
         .print-only { display: none; }
         @media print {
             @page { size: landscape; margin: 0; }
@@ -84,9 +76,7 @@
             .print-page {
                 page-break-after: always !important;
                 display: flex !important;
-                flex-direction: row !important;
-                width: 100vw !important;
-                height: 100vh !important;
+                width: 100vw !important; height: 100vh !important;
                 -webkit-print-color-adjust: exact !important;
             }
             .page-side { width: 50% !important; height: 100% !important; overflow: hidden !important; position: relative !important; flex-shrink: 0 !important; }
@@ -96,13 +86,11 @@
 <body class="h-screen overflow-hidden">
     <div id="root"></div>
 
-    <!-- Logica React in formato Babel/TSX -->
     <script type="text/babel" data-type="module">
-        import React, { useState, useRef, useEffect, useCallback } from 'react';
+        import React, { useState, useRef, useEffect } from 'react';
         import ReactDOM from 'react-dom/client';
         import { GoogleGenAI, Type } from "@google/genai";
 
-        // --- COSTANTI ---
         const STYLES = [
           { id: 'watercolor', label: 'Acquerello', icon: '💧', prompt: 'soft watercolor painting, storybook style, dreamy, gentle textures' },
           { id: 'manga', label: 'Manga / Anime', icon: '🇯🇵', prompt: 'clean anime style, vibrant colors, expressive characters' },
@@ -119,7 +107,6 @@
           { value: 'font-playfair', label: 'Playfair (Elegante)' }
         ];
 
-        // --- COMPONENTE PRINCIPALE ---
         const App = () => {
           const [pages, setPages] = useState([]);
           const [fullText, setFullText] = useState('');
@@ -140,55 +127,50 @@
 
           const fileInputRef = useRef(null);
 
-          // Verifica se è presente la chiave API nell'ambiente
           useEffect(() => {
             const checkKey = async () => {
-              if (window.aistudio?.hasSelectedApiKey) {
-                const selected = await window.aistudio.hasSelectedApiKey();
-                setHasKey(selected);
-              }
+              // Assumiamo che le funzioni siano presenti per le linee guida Pro/Veo
+              const selected = await window.aistudio.hasSelectedApiKey();
+              setHasKey(selected);
             };
             checkKey();
           }, []);
 
-          // Gestione BYOK (Bring Your Own Key)
           const handleSelectKey = async () => {
-            if (window.aistudio?.openSelectKey) {
-              try {
-                await window.aistudio.openSelectKey();
-                setHasKey(true);
-                setStatus("API Key collegata correttamente!");
-              } catch (e) {
-                setStatus("Errore durante la selezione della chiave.");
-              }
-            } else {
-              alert("Selezione chiave disponibile solo nell'ambiente AI Studio.");
+            try {
+              // Apri il dialogo di selezione del sistema
+              await window.aistudio.openSelectKey();
+              // Race condition: assumiamo successo e procediamo
+              setHasKey(true);
+              setStatus("Selezione chiave avviata.");
+            } catch (e) {
+              setStatus("Errore durante l'apertura della selezione chiave.");
             }
           };
 
           const handleApiError = (err, context) => {
             console.error(err);
-            if (err.message?.includes("Requested entity was not found")) {
+            const msg = err.message || "";
+            if (msg.includes("Requested entity was not found") || msg.includes("API key not valid")) {
               setHasKey(false);
-              setStatus("Errore: Seleziona un progetto con fatturazione attiva.");
+              setStatus("Chiave non valida. Seleziona un progetto con fatturazione attiva.");
               handleSelectKey();
             } else {
-              setStatus(`Errore ${context}: ${err.message || 'Errore sconosciuto'}`);
+              setStatus(`Errore ${context}: ${msg}`);
             }
           };
 
-          // Analisi della storia e creazione storyboard
           const analyzeStory = async () => {
             if (!fullText.trim()) return;
             setIsAnalyzing(true);
             setStatus('Gemini sta analizzando la tua storia...');
             try {
+              // Nuova istanza per ogni chiamata come da regole Pro
               const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
               const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
                 contents: `Dividi questo racconto in esattamente ${numScenes} scene. 
-                Restituisci esclusivamente un array JSON. 
-                FORMATO: [{"displayText": "testo della pagina", "imagePrompt": "prompt visivo in inglese per immagine stile libro"}]
+                Restituisci solo JSON: [{"displayText": "testo", "imagePrompt": "prompt visivo inglese"}]
                 TITOLO: ${title}
                 TESTO: ${fullText}`,
                 config: { 
@@ -208,57 +190,52 @@
               });
 
               const scenes = JSON.parse(response.text || '[]');
-
               setPages([
-                { id: 'cover', imageUrl: '', text: '', imagePrompt: `Splendid artistic book cover for a book titled "${title}"`, styleId: STYLES[0].id },
+                { id: 'cover', imageUrl: '', text: '', imagePrompt: `Artistic cover for "${title}"`, styleId: STYLES[0].id },
                 ...scenes.map((s) => ({
                   id: Math.random().toString(36).substring(7),
-                  imageUrl: '',
-                  text: s.displayText,
-                  imagePrompt: s.imagePrompt,
-                  styleId: STYLES[0].id
+                  imageUrl: '', text: s.displayText, imagePrompt: s.imagePrompt, styleId: STYLES[0].id
                 }))
               ]);
               setCurrentIndex(0);
-              setStatus('Storyboard creato con successo!');
+              setStatus('Storyboard creato!');
             } catch (err) { 
               handleApiError(err, "Analisi");
             } finally { setIsAnalyzing(false); }
           };
 
-          // Generazione dell'immagine per la pagina corrente
           const generateImage = async (pageIndex) => {
             const page = pages[pageIndex];
             const pageStyle = STYLES.find(s => s.id === page.styleId) || STYLES[0];
-            
             setIsGeneratingImg(page.id);
             setStatus(`Dipingendo l'illustrazione...`);
             try {
+              // Nuova istanza prima della chiamata
               const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
               const response = await ai.models.generateContent({
                 model: 'gemini-3-pro-image-preview',
                 contents: {
-                  parts: [{ text: `${page.imagePrompt}. Style: ${pageStyle.prompt}. High resolution illustration for children's book.` }]
+                  parts: [{ text: `${page.imagePrompt}. Style: ${pageStyle.prompt}. Children's book illustration.` }]
                 },
                 config: { 
                   imageConfig: { aspectRatio: "1:1", imageSize: "1K" }
                 }
               });
               
-              let base64Data = "";
+              let base64 = "";
               const parts = response.candidates?.[0]?.content?.parts || [];
               for (const part of parts) {
                 if (part.inlineData) {
-                  base64Data = `data:image/png;base64,${part.inlineData.data}`;
+                  base64 = `data:image/png;base64,${part.inlineData.data}`;
                   break;
                 }
               }
 
-              if (base64Data) {
-                updatePageData(pageIndex, 'imageUrl', base64Data);
+              if (base64) {
+                updatePageData(pageIndex, 'imageUrl', base64);
                 setStatus('Illustrazione completata!');
               } else {
-                throw new Error("Nessuna immagine prodotta dal modello.");
+                throw new Error("Immagine non generata.");
               }
             } catch (err) { 
               handleApiError(err, "Immagine");
@@ -269,43 +246,9 @@
             setPages(prev => prev.map((p, i) => i === index ? { ...p, [field]: value } : p));
           };
 
-          const exportToJSON = () => {
-            const data = { title, author, fullText, numScenes, settings, pages };
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${title || 'mio-libro'}_storyvisualizer.json`;
-            a.click();
-            setStatus("Progetto scaricato!");
-          };
-
-          const importFromJSON = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (event) => {
-              try {
-                const data = JSON.parse(event.target.result);
-                setTitle(data.title || '');
-                setAuthor(data.author || '');
-                setFullText(data.fullText || '');
-                setNumScenes(data.numScenes || 6);
-                setSettings(data.settings || settings);
-                setPages(data.pages || []);
-                setCurrentIndex(0);
-                setStatus("Progetto caricato!");
-              } catch (err) { alert("Errore nel file JSON."); }
-            };
-            reader.readAsText(file);
-          };
-
-          // Sotto-componente per la vista Pagina
           const PageView = ({ page, index, isPrint = false }) => (
             <div className={`flex w-full bg-white book-spread overflow-hidden relative ${isPrint ? 'print-page shadow-none' : 'aspect-[1.6/1] max-w-5xl rounded-2xl border border-slate-200 shadow-2xl'}`}>
               <div className="book-spine" />
-              
-              {/* LATO IMMAGINE (SINISTRA) */}
               <div className="page-side w-1/2 h-full bg-slate-50 border-r border-slate-100 relative flex items-center justify-center p-6">
                 {isGeneratingImg === page.id ? (
                   <div className="flex flex-col items-center gap-4">
@@ -317,31 +260,21 @@
                 ) : (
                   <div className="flex flex-col items-center opacity-10">
                     <span className="text-8xl">🎨</span>
-                    <p className="text-sm font-bold uppercase mt-2">Nessuna Immagine</p>
                   </div>
                 )}
               </div>
-
-              {/* LATO TESTO (DESTRA) */}
               <div className="page-side w-1/2 h-full bg-white relative flex flex-col items-center justify-center p-12 text-center">
                 {index === 0 ? (
                   <div className="space-y-6">
-                    <h1 className="font-playfair text-6xl text-slate-800 leading-tight drop-shadow-sm">{title || "Il Tuo Libro"}</h1>
-                    <div className="w-16 h-1 bg-slate-200 mx-auto rounded-full" />
+                    <h1 className="font-playfair text-6xl text-slate-800 leading-tight">{title || "Il Tuo Libro"}</h1>
                     <p className="font-patrick text-2xl text-slate-400 italic">di {author || "Scrittore"}</p>
                   </div>
                 ) : (
-                  <div 
-                    className={`w-full ${settings.fontFamily} leading-relaxed custom-scrollbar overflow-y-auto max-h-[75%]`} 
-                    style={{ fontSize: `${settings.fontSize}px`, color: settings.textColor }} 
-                    contentEditable={!isPrint} 
-                    suppressContentEditableWarning 
-                    onBlur={(e) => updatePageData(index, 'text', e.currentTarget.innerText)}
-                  >
-                    {page.text || "Scrivi qui il contenuto della pagina..."}
+                  <div className={`w-full ${settings.fontFamily} leading-relaxed custom-scrollbar overflow-y-auto max-h-[75%]`} style={{ fontSize: `${settings.fontSize}px`, color: settings.textColor }}>
+                    {page.text}
                   </div>
                 )}
-                <div className="absolute bottom-8 w-full text-center text-[10px] font-black text-slate-300 uppercase tracking-[0.3em]">
+                <div className="absolute bottom-8 w-full text-center text-[10px] font-black text-slate-300 uppercase tracking-widest">
                   {index === 0 ? "COPERTINA" : `PAGINA ${index}`}
                 </div>
               </div>
@@ -354,175 +287,93 @@
                 {pages.map((p, i) => <PageView key={p.id} page={p} index={i} isPrint={true} />)}
               </div>
 
-              {/* BARRA LATERALE SINISTRA (EDITOR) */}
               <aside className="no-print w-80 bg-white border-r border-slate-300 flex flex-col shadow-2xl z-50">
-                <div className="p-6 border-b bg-slate-900 text-white flex items-center justify-between">
+                <div className="p-6 border-b bg-slate-900 text-white">
                   <h2 className="text-2xl font-amatic uppercase tracking-widest">✨ StoryVisualizer</h2>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                   {/* API KEY SECTION */}
-                  <div className={`p-4 rounded-xl border transition-all ${hasKey ? 'bg-green-50 border-green-100' : 'bg-orange-50 border-orange-100'}`}>
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Stato API</span>
-                      <span className={`text-[10px] font-bold ${hasKey ? 'text-green-600' : 'text-orange-600'}`}>
-                        {hasKey ? 'PRONTO ✅' : 'ATTESA ⚠️'}
-                      </span>
-                    </div>
-                    <button onClick={handleSelectKey} className="w-full py-2 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black active:scale-95 transition-all">
-                      {hasKey ? '🔄 Cambia API Key' : '🔑 Collega API Key'}
+                  <div className={`p-4 rounded-xl border ${hasKey ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2">Impostazioni Pagamento Gemini</label>
+                    <button onClick={handleSelectKey} className="w-full py-2 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all mb-2">
+                      {hasKey ? '🔄 Seleziona Altra Chiave' : '🔑 Collega Chiave Pagata'}
                     </button>
+                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-[9px] text-indigo-600 underline font-bold block text-center">Info Fatturazione Google Cloud →</a>
                   </div>
 
-                  {/* INFO LIBRO */}
+                  <div className="space-y-3 pt-4 border-t">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dettagli</label>
+                    <input type="text" placeholder="Titolo" className="w-full p-3 text-sm border border-slate-200 rounded-xl outline-none font-bold" value={title} onChange={e => setTitle(e.target.value)} />
+                    <input type="text" placeholder="Autore" className="w-full p-3 text-sm border border-slate-200 rounded-xl outline-none" value={author} onChange={e => setAuthor(e.target.value)} />
+                  </div>
+
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dettagli Libro</label>
-                    <input type="text" placeholder="Titolo" className="w-full p-3 text-sm border border-slate-200 rounded-xl focus:ring-2 ring-indigo-500 outline-none font-bold" value={title} onChange={e => setTitle(e.target.value)} />
-                    <input type="text" placeholder="Autore" className="w-full p-3 text-sm border border-slate-200 rounded-xl focus:ring-2 ring-indigo-500 outline-none" value={author} onChange={e => setAuthor(e.target.value)} />
-                  </div>
-
-                  {/* STORIA */}
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Il tuo racconto</label>
-                    <textarea 
-                      className="w-full h-44 p-4 text-xs border border-slate-200 rounded-xl resize-none focus:ring-2 ring-indigo-500 outline-none leading-relaxed" 
-                      placeholder="Scrivi qui la tua storia per trasformarla in un libro..." 
-                      value={fullText} 
-                      onChange={e => setFullText(e.target.value)} 
-                    />
-                    <div className="flex items-center justify-between px-1">
-                      <span className="text-[10px] font-bold text-slate-400">Scene: {numScenes}</span>
-                      <input type="range" min="3" max="15" value={numScenes} onChange={e => setNumScenes(parseInt(e.target.value))} className="w-28 accent-slate-900" />
-                    </div>
-                    <button 
-                      onClick={analyzeStory} 
-                      disabled={isAnalyzing || !fullText.trim() || !hasKey} 
-                      className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 shadow-lg active:scale-95 transition-all"
-                    >
-                      {isAnalyzing ? 'Elaborazione AI...' : '🧠 Genera Storyboard'}
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">La tua storia</label>
+                    <textarea className="w-full h-40 p-4 text-xs border border-slate-200 rounded-xl resize-none outline-none" placeholder="C'era una volta..." value={fullText} onChange={e => setFullText(e.target.value)} />
+                    <button onClick={analyzeStory} disabled={isAnalyzing || !fullText.trim() || !hasKey} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all">
+                      {isAnalyzing ? 'Elaborazione...' : '🧠 Crea Storyboard'}
                     </button>
-                  </div>
-
-                  {/* FILE OPS */}
-                  <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100">
-                    <button onClick={exportToJSON} className="flex flex-col items-center gap-1 p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all text-[9px] font-bold uppercase">
-                      <span className="text-xl">💾</span> Salva
-                    </button>
-                    <button onClick={() => fileInputRef.current.click()} className="flex flex-col items-center gap-1 p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all text-[9px] font-bold uppercase">
-                      <span className="text-xl">📂</span> Carica
-                    </button>
-                    <input type="file" ref={fileInputRef} onChange={importFromJSON} className="hidden" accept=".json" />
                   </div>
                 </div>
               </aside>
 
-              {/* AREA PRINCIPALE (LIBRO) */}
               <main className="no-print flex-1 flex flex-col items-center justify-center p-12 relative">
-                {/* NAVIGAZIONE */}
                 <div className="absolute top-10 flex items-center gap-6 z-40">
-                  <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-4 rounded-full shadow-xl hover:scale-110 active:scale-90 disabled:opacity-20 border border-slate-100 transition-all" disabled={currentIndex === 0}>❮</button>
+                  <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-4 rounded-full shadow-xl hover:scale-110 disabled:opacity-20 border border-slate-100 transition-all" disabled={currentIndex === 0}>❮</button>
                   <div className="bg-white/80 backdrop-blur-md px-10 py-3 rounded-full text-[11px] font-black text-slate-600 uppercase tracking-widest border border-white shadow-lg">
-                    {pages.length > 0 ? (currentIndex === 0 ? 'Copertina' : `Scena ${currentIndex} / ${pages.length - 1}`) : 'Nuovo Progetto'}
+                    {pages.length > 0 ? (currentIndex === 0 ? 'Copertina' : `Pagina ${currentIndex}`) : 'Pronto'}
                   </div>
-                  <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-4 rounded-full shadow-xl hover:scale-110 active:scale-90 disabled:opacity-20 border border-slate-100 transition-all" disabled={currentIndex === pages.length - 1}>❯</button>
+                  <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-4 rounded-full shadow-xl hover:scale-110 disabled:opacity-20 border border-slate-100 transition-all" disabled={currentIndex === pages.length - 1}>❯</button>
                 </div>
                 
-                {pages.length > 0 ? (
-                  <PageView page={pages[currentIndex]} index={currentIndex} />
-                ) : (
-                  <div className="text-center opacity-10 select-none flex flex-col items-center pointer-events-none">
-                    <span className="text-[15rem]">📖</span>
-                    <p className="text-2xl font-black uppercase tracking-widest -mt-4">Nessun Libro Creato</p>
-                  </div>
-                )}
+                {pages.length > 0 ? <PageView page={pages[currentIndex]} index={currentIndex} /> : <span className="text-9xl opacity-5">📖</span>}
 
-                {/* STATUS MESSAGE */}
                 {status && (
-                  <div className="absolute bottom-10 px-8 py-4 bg-slate-900 text-white rounded-2xl shadow-2xl text-[10px] font-black uppercase tracking-[0.2em] z-50 text-center max-w-xl border-t-4 border-indigo-500 animate-bounce-short">
+                  <div className="absolute bottom-10 px-8 py-4 bg-slate-900 text-white rounded-2xl shadow-2xl text-[10px] font-black uppercase tracking-widest z-50 text-center max-w-xl border-t-4 border-indigo-500">
                     {status}
                   </div>
                 )}
               </main>
 
-              {/* BARRA LATERALE DESTRA (STYLE & TOOLS) */}
               <aside className="no-print w-80 bg-white border-l border-slate-300 flex flex-col shadow-2xl z-50">
                 <div className="p-6 border-b text-center">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Design Pagina</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Editor Grafico</h3>
                 </div>
                 
                 {pages.length > 0 ? (
                   <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-                    {/* STILE ILLUSTRATIVO */}
                     <div className="space-y-4">
-                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
-                        <span>🎨 Stile Artistico</span>
-                      </label>
-                      <select 
-                        className="w-full p-3 text-xs border border-slate-200 rounded-xl bg-slate-50 font-bold outline-none cursor-pointer hover:border-indigo-300 transition-all" 
-                        value={pages[currentIndex].styleId} 
-                        onChange={e => updatePageData(currentIndex, 'styleId', e.target.value)}
-                      >
+                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🎨 Stile</label>
+                      <select className="w-full p-3 text-xs border border-slate-200 rounded-xl bg-slate-50 font-bold outline-none cursor-pointer" value={pages[currentIndex].styleId} onChange={e => updatePageData(currentIndex, 'styleId', e.target.value)}>
                         {STYLES.map(s => <option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
                       </select>
-                      <button 
-                        onClick={() => generateImage(currentIndex)} 
-                        disabled={isGeneratingImg === pages[currentIndex].id || !hasKey} 
-                        className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs shadow-xl hover:bg-indigo-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50"
-                      >
-                        ✨ Crea Illustrazione
+                      <button onClick={() => generateImage(currentIndex)} disabled={isGeneratingImg === pages[currentIndex].id || !hasKey} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs shadow-xl hover:bg-indigo-700 disabled:opacity-50 transition-all">
+                        ✨ Genera Illustrazione
                       </button>
                     </div>
 
-                    {/* PROMPT VISIVO */}
-                    <div className="space-y-3 pt-6 border-t border-slate-100">
-                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione Scena</label>
-                      <textarea 
-                        className="w-full h-32 p-3 text-[11px] bg-slate-50 border border-slate-200 rounded-xl resize-none outline-none leading-relaxed font-medium focus:ring-2 ring-indigo-500" 
-                        value={pages[currentIndex].imagePrompt} 
-                        onChange={e => updatePageData(currentIndex, 'imagePrompt', e.target.value)} 
-                      />
-                      <p className="text-[9px] text-slate-400 italic leading-tight">Puoi modificare questa descrizione per guidare meglio l'AI nel disegno.</p>
+                    <div className="space-y-3 pt-6 border-t">
+                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione AI</label>
+                      <textarea className="w-full h-32 p-3 text-[11px] bg-slate-50 border border-slate-200 rounded-xl resize-none outline-none leading-relaxed" value={pages[currentIndex].imagePrompt} onChange={e => updatePageData(currentIndex, 'imagePrompt', e.target.value)} />
                     </div>
 
-                    {/* TIPOGRAFIA */}
-                    <div className="space-y-4 pt-6 border-t border-slate-100">
-                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Carattere</label>
-                      <select 
-                        className="w-full p-3 text-[11px] border border-slate-200 rounded-xl outline-none font-bold" 
-                        value={settings.fontFamily} 
-                        onChange={e => setSettings({...settings, fontFamily: e.target.value})}
-                      >
+                    <div className="space-y-4 pt-6 border-t">
+                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Font & Testo</label>
+                      <select className="w-full p-3 text-[11px] border border-slate-200 rounded-xl outline-none font-bold" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
                         {FONT_FAMILIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                       </select>
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center text-[10px] font-bold">
-                          <span className="text-slate-400 uppercase">Dimensione</span>
-                          <span className="text-indigo-600">{settings.fontSize}px</span>
-                        </div>
-                        <input 
-                          type="range" min="16" max="60" 
-                          value={settings.fontSize} 
-                          onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} 
-                          className="w-full accent-indigo-600" 
-                        />
-                      </div>
+                      <input type="range" min="16" max="60" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} className="w-full accent-indigo-600" />
                     </div>
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center p-10 opacity-20 italic text-center text-xs">
-                    <p>Scrivi una storia e premi "Genera Storyboard" per iniziare a progettare il libro.</p>
+                    <p>Completa lo storyboard per iniziare.</p>
                   </div>
                 )}
 
-                {/* EXPORT FINALE */}
-                <div className="p-6 border-t border-slate-100 bg-slate-50/80">
-                  <button 
-                    onClick={() => window.print()} 
-                    disabled={pages.length === 0} 
-                    className="w-full py-5 bg-slate-900 text-white rounded-xl text-[11px] font-black uppercase tracking-widest shadow-2xl hover:bg-black active:scale-95 transition-all flex items-center justify-center gap-2"
-                  >
-                    <span>🖨️</span> PDF Pronto per Stampa
-                  </button>
+                <div className="p-6 border-t bg-slate-50">
+                  <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full py-5 bg-slate-900 text-white rounded-xl text-[11px] font-black uppercase tracking-widest shadow-2xl hover:bg-black transition-all">🖨️ Stampa PDF Libro</button>
                 </div>
               </aside>
             </div>
