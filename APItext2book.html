@@ -127,24 +127,40 @@
 
           const fileInputRef = useRef(null);
 
+          // Effetto di caricamento per gestire in sicurezza l'ambiente
           useEffect(() => {
             const checkKey = async () => {
-              // Assumiamo che le funzioni siano presenti per le linee guida Pro/Veo
-              const selected = await window.aistudio.hasSelectedApiKey();
-              setHasKey(selected);
+              try {
+                // Verifichiamo se siamo in AI Studio (GitHub o Iframe speciale)
+                if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+                  const selected = await window.aistudio.hasSelectedApiKey();
+                  setHasKey(selected);
+                } else if (process.env.API_KEY) {
+                  // Fallback: se la chiave è già iniettata dall'ambiente
+                  setHasKey(true);
+                }
+              } catch (e) {
+                console.warn("Ambiente AI Studio non rilevato o errore nel controllo API Key.");
+                if (process.env.API_KEY) setHasKey(true);
+              }
             };
             checkKey();
           }, []);
 
           const handleSelectKey = async () => {
-            try {
-              // Apri il dialogo di selezione del sistema
-              await window.aistudio.openSelectKey();
-              // Race condition: assumiamo successo e procediamo
-              setHasKey(true);
-              setStatus("Selezione chiave avviata.");
-            } catch (e) {
-              setStatus("Errore durante l'apertura della selezione chiave.");
+            // Verifica se la funzione nativa esiste nell'ambiente corrente
+            if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+              try {
+                await window.aistudio.openSelectKey();
+                setHasKey(true); // Race condition: procediamo
+                setStatus("Configurazione chiave avviata.");
+              } catch (e) {
+                setStatus("Errore durante l'apertura del selettore chiavi.");
+              }
+            } else {
+              // Se siamo su GitHub senza ambiente AI Studio, la chiave dovrebbe essere già in process.env
+              setStatus("Ambiente senza selettore nativo. Uso chiave di sistema.");
+              if (process.env.API_KEY) setHasKey(true);
             }
           };
 
@@ -153,7 +169,7 @@
             const msg = err.message || "";
             if (msg.includes("Requested entity was not found") || msg.includes("API key not valid")) {
               setHasKey(false);
-              setStatus("Chiave non valida. Seleziona un progetto con fatturazione attiva.");
+              setStatus("API Key non valida o mancante. Seleziona una chiave con billing attivo.");
               handleSelectKey();
             } else {
               setStatus(`Errore ${context}: ${msg}`);
@@ -163,13 +179,12 @@
           const analyzeStory = async () => {
             if (!fullText.trim()) return;
             setIsAnalyzing(true);
-            setStatus('Gemini sta analizzando la tua storia...');
+            setStatus('Gemini sta dividendo la tua storia in scene...');
             try {
-              // Nuova istanza per ogni chiamata come da regole Pro
               const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
               const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
-                contents: `Dividi questo racconto in esattamente ${numScenes} scene. 
+                contents: `Analizza questa storia e dividila in ${numScenes} scene. 
                 Restituisci solo JSON: [{"displayText": "testo", "imagePrompt": "prompt visivo inglese"}]
                 TITOLO: ${title}
                 TESTO: ${fullText}`,
@@ -191,14 +206,14 @@
 
               const scenes = JSON.parse(response.text || '[]');
               setPages([
-                { id: 'cover', imageUrl: '', text: '', imagePrompt: `Artistic cover for "${title}"`, styleId: STYLES[0].id },
+                { id: 'cover', imageUrl: '', text: '', imagePrompt: `High quality cover for a children's book titled "${title}"`, styleId: STYLES[0].id },
                 ...scenes.map((s) => ({
                   id: Math.random().toString(36).substring(7),
                   imageUrl: '', text: s.displayText, imagePrompt: s.imagePrompt, styleId: STYLES[0].id
                 }))
               ]);
               setCurrentIndex(0);
-              setStatus('Storyboard creato!');
+              setStatus('Storyboard completato! Ora puoi generare i disegni.');
             } catch (err) { 
               handleApiError(err, "Analisi");
             } finally { setIsAnalyzing(false); }
@@ -208,14 +223,13 @@
             const page = pages[pageIndex];
             const pageStyle = STYLES.find(s => s.id === page.styleId) || STYLES[0];
             setIsGeneratingImg(page.id);
-            setStatus(`Dipingendo l'illustrazione...`);
+            setStatus(`Dipingendo la scena ${pageIndex}...`);
             try {
-              // Nuova istanza prima della chiamata
               const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
               const response = await ai.models.generateContent({
                 model: 'gemini-3-pro-image-preview',
                 contents: {
-                  parts: [{ text: `${page.imagePrompt}. Style: ${pageStyle.prompt}. Children's book illustration.` }]
+                  parts: [{ text: `${page.imagePrompt}. Style: ${pageStyle.prompt}. Children's book illustration, vibrant.` }]
                 },
                 config: { 
                   imageConfig: { aspectRatio: "1:1", imageSize: "1K" }
@@ -233,7 +247,7 @@
 
               if (base64) {
                 updatePageData(pageIndex, 'imageUrl', base64);
-                setStatus('Illustrazione completata!');
+                setStatus('Illustrazione completata con successo!');
               } else {
                 throw new Error("Immagine non generata.");
               }
@@ -253,7 +267,7 @@
                 {isGeneratingImg === page.id ? (
                   <div className="flex flex-col items-center gap-4">
                     <div className="w-16 h-16 loader-shimmer rounded-full" />
-                    <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest animate-pulse">Generazione...</span>
+                    <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest animate-pulse">In creazione...</span>
                   </div>
                 ) : page.imageUrl ? (
                   <img src={page.imageUrl} className="max-w-[90%] max-h-[90%] object-contain rounded-lg shadow-xl ring-8 ring-white" alt="Illustrazione" />
@@ -266,12 +280,12 @@
               <div className="page-side w-1/2 h-full bg-white relative flex flex-col items-center justify-center p-12 text-center">
                 {index === 0 ? (
                   <div className="space-y-6">
-                    <h1 className="font-playfair text-6xl text-slate-800 leading-tight">{title || "Il Tuo Libro"}</h1>
-                    <p className="font-patrick text-2xl text-slate-400 italic">di {author || "Scrittore"}</p>
+                    <h1 className="font-playfair text-6xl text-slate-800 leading-tight">{title || "Titolo Libro"}</h1>
+                    <p className="font-patrick text-2xl text-slate-400 italic">di {author || "Autore"}</p>
                   </div>
                 ) : (
                   <div className={`w-full ${settings.fontFamily} leading-relaxed custom-scrollbar overflow-y-auto max-h-[75%]`} style={{ fontSize: `${settings.fontSize}px`, color: settings.textColor }}>
-                    {page.text}
+                    {page.text || "Il testo apparirà qui..."}
                   </div>
                 )}
                 <div className="absolute bottom-8 w-full text-center text-[10px] font-black text-slate-300 uppercase tracking-widest">
@@ -297,22 +311,22 @@
                   <div className={`p-4 rounded-xl border ${hasKey ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2">Impostazioni Pagamento Gemini</label>
                     <button onClick={handleSelectKey} className="w-full py-2 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all mb-2">
-                      {hasKey ? '🔄 Seleziona Altra Chiave' : '🔑 Collega Chiave Pagata'}
+                      {hasKey ? '🔄 Seleziona Altra Chiave' : '🔑 Collega Progetto Pagato'}
                     </button>
-                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-[9px] text-indigo-600 underline font-bold block text-center">Info Fatturazione Google Cloud →</a>
+                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-[9px] text-indigo-600 underline font-bold block text-center">Guida Fatturazione Google →</a>
                   </div>
 
                   <div className="space-y-3 pt-4 border-t">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dettagli</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Informazioni Libro</label>
                     <input type="text" placeholder="Titolo" className="w-full p-3 text-sm border border-slate-200 rounded-xl outline-none font-bold" value={title} onChange={e => setTitle(e.target.value)} />
                     <input type="text" placeholder="Autore" className="w-full p-3 text-sm border border-slate-200 rounded-xl outline-none" value={author} onChange={e => setAuthor(e.target.value)} />
                   </div>
 
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">La tua storia</label>
-                    <textarea className="w-full h-40 p-4 text-xs border border-slate-200 rounded-xl resize-none outline-none" placeholder="C'era una volta..." value={fullText} onChange={e => setFullText(e.target.value)} />
-                    <button onClick={analyzeStory} disabled={isAnalyzing || !fullText.trim() || !hasKey} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all">
-                      {isAnalyzing ? 'Elaborazione...' : '🧠 Crea Storyboard'}
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Scrivi la tua storia</label>
+                    <textarea className="w-full h-40 p-4 text-xs border border-slate-200 rounded-xl resize-none outline-none leading-relaxed" placeholder="C'era una volta..." value={fullText} onChange={e => setFullText(e.target.value)} />
+                    <button onClick={analyzeStory} disabled={isAnalyzing || !fullText.trim() || !hasKey} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg active:scale-95">
+                      {isAnalyzing ? 'Elaborazione AI...' : '🧠 Crea Storyboard'}
                     </button>
                   </div>
                 </div>
@@ -322,15 +336,15 @@
                 <div className="absolute top-10 flex items-center gap-6 z-40">
                   <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-4 rounded-full shadow-xl hover:scale-110 disabled:opacity-20 border border-slate-100 transition-all" disabled={currentIndex === 0}>❮</button>
                   <div className="bg-white/80 backdrop-blur-md px-10 py-3 rounded-full text-[11px] font-black text-slate-600 uppercase tracking-widest border border-white shadow-lg">
-                    {pages.length > 0 ? (currentIndex === 0 ? 'Copertina' : `Pagina ${currentIndex}`) : 'Pronto'}
+                    {pages.length > 0 ? (currentIndex === 0 ? 'Copertina' : `Scena ${currentIndex}`) : 'Pronto per iniziare'}
                   </div>
                   <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-4 rounded-full shadow-xl hover:scale-110 disabled:opacity-20 border border-slate-100 transition-all" disabled={currentIndex === pages.length - 1}>❯</button>
                 </div>
                 
-                {pages.length > 0 ? <PageView page={pages[currentIndex]} index={currentIndex} /> : <span className="text-9xl opacity-5">📖</span>}
+                {pages.length > 0 ? <PageView page={pages[currentIndex]} index={currentIndex} /> : <span className="text-9xl opacity-5 grayscale pointer-events-none">📖</span>}
 
                 {status && (
-                  <div className="absolute bottom-10 px-8 py-4 bg-slate-900 text-white rounded-2xl shadow-2xl text-[10px] font-black uppercase tracking-widest z-50 text-center max-w-xl border-t-4 border-indigo-500">
+                  <div className="absolute bottom-10 px-8 py-4 bg-slate-900 text-white rounded-2xl shadow-2xl text-[10px] font-black uppercase tracking-widest z-50 text-center max-w-xl border-t-4 border-indigo-500 animate-pulse">
                     {status}
                   </div>
                 )}
@@ -338,42 +352,46 @@
 
               <aside className="no-print w-80 bg-white border-l border-slate-300 flex flex-col shadow-2xl z-50">
                 <div className="p-6 border-b text-center">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Editor Grafico</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Personalizza Scena</h3>
                 </div>
                 
                 {pages.length > 0 ? (
                   <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
                     <div className="space-y-4">
-                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🎨 Stile</label>
+                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🎨 Stile Grafico</label>
                       <select className="w-full p-3 text-xs border border-slate-200 rounded-xl bg-slate-50 font-bold outline-none cursor-pointer" value={pages[currentIndex].styleId} onChange={e => updatePageData(currentIndex, 'styleId', e.target.value)}>
                         {STYLES.map(s => <option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
                       </select>
-                      <button onClick={() => generateImage(currentIndex)} disabled={isGeneratingImg === pages[currentIndex].id || !hasKey} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs shadow-xl hover:bg-indigo-700 disabled:opacity-50 transition-all">
-                        ✨ Genera Illustrazione
+                      <button onClick={() => generateImage(currentIndex)} disabled={isGeneratingImg === pages[currentIndex].id || !hasKey} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-xs shadow-xl hover:bg-indigo-700 disabled:opacity-50 transition-all active:scale-95">
+                        ✨ Disegna Illustrazione
                       </button>
                     </div>
 
                     <div className="space-y-3 pt-6 border-t">
-                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione AI</label>
+                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione Scena</label>
                       <textarea className="w-full h-32 p-3 text-[11px] bg-slate-50 border border-slate-200 rounded-xl resize-none outline-none leading-relaxed" value={pages[currentIndex].imagePrompt} onChange={e => updatePageData(currentIndex, 'imagePrompt', e.target.value)} />
                     </div>
 
                     <div className="space-y-4 pt-6 border-t">
-                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Font & Testo</label>
+                      <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Tipografia</label>
                       <select className="w-full p-3 text-[11px] border border-slate-200 rounded-xl outline-none font-bold" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
                         {FONT_FAMILIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                       </select>
+                      <div className="flex justify-between items-center text-[9px] font-black uppercase text-slate-400">
+                        <span>Dimensione</span>
+                        <span>{settings.fontSize}px</span>
+                      </div>
                       <input type="range" min="16" max="60" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} className="w-full accent-indigo-600" />
                     </div>
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center p-10 opacity-20 italic text-center text-xs">
-                    <p>Completa lo storyboard per iniziare.</p>
+                    <p>Scrivi una storia per sbloccare l'editor grafico.</p>
                   </div>
                 )}
 
                 <div className="p-6 border-t bg-slate-50">
-                  <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full py-5 bg-slate-900 text-white rounded-xl text-[11px] font-black uppercase tracking-widest shadow-2xl hover:bg-black transition-all">🖨️ Stampa PDF Libro</button>
+                  <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full py-5 bg-slate-900 text-white rounded-xl text-[11px] font-black uppercase tracking-widest shadow-2xl hover:bg-black transition-all">🖨️ Stampa Libro PDF</button>
                 </div>
               </aside>
             </div>
