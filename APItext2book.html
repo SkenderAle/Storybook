@@ -128,6 +128,24 @@
                 localStorage.setItem('gemini_api_key', manualKey);
             }, [manualKey]);
 
+            // Funzione per gestire i retry in caso di errore 429
+            const callWithRetry = async (fn, retries = 3, delay = 3000) => {
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        return await fn();
+                    } catch (err) {
+                        const errorMsg = err.message || "";
+                        if ((errorMsg.includes('429') || errorMsg.includes('quota')) && i < retries - 1) {
+                            setStatus(`Limite raggiunto, riprovo tra ${delay/1000}s...`);
+                            await new Promise(res => setTimeout(res, delay));
+                            delay *= 2; // Backoff esponenziale
+                            continue;
+                        }
+                        throw err;
+                    }
+                }
+            };
+
             const updatePageData = (index, field, value) => {
                 setPages(prev => prev.map((p, i) => i === index ? { ...p, [field]: value } : p));
             };
@@ -135,16 +153,16 @@
             const analyzeStory = async () => {
                 const key = manualKey || process.env.API_KEY;
                 if (!key) return alert("Inserisci l'API Key.");
-                if (!fullText) return alert("Inserisci il testo.");
+                if (!fullText) return alert("Inserisci il testo della storia.");
 
                 setIsAnalyzing(true);
-                setStatus('Analisi in corso...');
+                setStatus('Analisi della storia...');
                 try {
                     const ai = new GoogleGenAI({ apiKey: key });
-                    const systemPrompt = `Sei un editor. Dividi il testo in esattamente ${numScenes} scene. 
+                    const systemPrompt = `Dividi il testo in esattamente ${numScenes} scene. 
                     Restituisci JSON: [{"displayText": "testo per la pagina", "imagePrompt": "descrizione visiva"}]`;
 
-                    const response = await ai.models.generateContent({
+                    const response = await callWithRetry(() => ai.models.generateContent({
                         model: 'gemini-3-pro-preview',
                         contents: [{ parts: [{ text: `${systemPrompt}\n\nTESTO:\n${fullText}` }] }],
                         config: { 
@@ -160,11 +178,11 @@
                                 }
                             }
                         }
-                    });
+                    }));
 
                     const scenes = JSON.parse(response.text);
                     const newPages = [
-                        { id: 'cover', imageUrl: '', text: '', imagePrompt: 'Book cover for: ' + title, imageScale: 1, styleId: STYLES[0].id },
+                        { id: 'cover', imageUrl: '', text: '', imagePrompt: 'Splendid book cover for: ' + title, imageScale: 1, styleId: STYLES[0].id },
                         ...scenes.map((s) => ({
                             id: Math.random().toString(36),
                             imageUrl: '',
@@ -177,7 +195,10 @@
                     setPages(newPages);
                     setCurrentIndex(0);
                     setStatus('Analisi completata!');
-                } catch (err) { setStatus('Errore analisi.'); } finally { setIsAnalyzing(false); }
+                } catch (err) { 
+                    console.error(err);
+                    setStatus('Errore durante l\'analisi. Verifica l\'API Key e la quota.'); 
+                } finally { setIsAnalyzing(false); }
             };
 
             const generateImage = async (pageIndex) => {
@@ -187,15 +208,16 @@
                 const pageStyle = STYLES.find(s => s.id === page.styleId) || STYLES[0];
                 
                 setIsGeneratingImg(page.id);
-                setStatus(`Pittura in corso...`);
+                setStatus(`Generazione immagine in corso...`);
                 try {
                     const ai = new GoogleGenAI({ apiKey: key });
-                    const finalPrompt = `${page.imagePrompt}, ${pageStyle.prompt}, high resolution.`;
-                    const response = await ai.models.generateContent({
+                    const finalPrompt = `${page.imagePrompt}, ${pageStyle.prompt}, very high quality.`;
+                    
+                    const response = await callWithRetry(() => ai.models.generateContent({
                         model: 'gemini-2.5-flash-image',
                         contents: [{ parts: [{ text: finalPrompt }] }],
                         config: { imageConfig: { aspectRatio: "1:1" } }
-                    });
+                    }));
                     
                     let base64 = "";
                     for (const part of response.candidates[0].content.parts) {
@@ -203,9 +225,14 @@
                     }
                     if (base64) {
                         updatePageData(pageIndex, 'imageUrl', base64);
-                        setStatus('Fatto!');
+                        setStatus('Immagine generata con successo!');
+                    } else {
+                        throw new Error("Nessun dato immagine ricevuto.");
                     }
-                } catch (err) { setStatus('Errore immagine.'); } finally { setIsGeneratingImg(null); }
+                } catch (err) { 
+                    console.error(err);
+                    setStatus('Errore generazione immagine.'); 
+                } finally { setIsGeneratingImg(null); }
             };
 
             const PageView = ({ page, index, isPrint = false }) => (
@@ -214,24 +241,24 @@
                     <div className="page-side w-1/2 h-full bg-slate-50 border-r relative flex items-center justify-center p-4 overflow-hidden">
                         {isGeneratingImg === page.id ? (
                             <div className="w-full h-full flex flex-col items-center justify-center space-y-4">
-                                <div className="w-20 h-20 loader-shimmer rounded-full" />
-                                <span className="text-[10px] font-black text-indigo-400 animate-pulse uppercase">L'AI sta disegnando...</span>
+                                <div className="w-24 h-24 loader-shimmer rounded-full" />
+                                <span className="text-[10px] font-black text-indigo-400 animate-pulse uppercase tracking-widest text-center px-4">L'AI sta creando la scena...</span>
                             </div>
                         ) : page.imageUrl ? (
                             <img src={page.imageUrl} style={{ transform: `scale(${page.imageScale || 1})` }} className="max-w-[90%] max-h-[90%] object-contain shadow-2xl rounded transition-all duration-300" />
                         ) : (
-                            <div className="text-8xl opacity-10">🖼️</div>
+                            <div className="text-8xl opacity-10 grayscale">🖼️</div>
                         )}
                     </div>
                     <div className="page-side w-1/2 h-full bg-white relative flex flex-col items-center justify-center p-12 text-center">
                         {index === 0 ? (
                             <div className="space-y-6">
-                                <h1 className="font-playfair text-6xl text-slate-800 leading-tight">{title || "Titolo"}</h1>
-                                <p className="font-patrick text-2xl text-slate-400 italic">di {author || "Autore"}</p>
+                                <h1 className="font-playfair text-6xl text-slate-800 leading-tight">{title || "Titolo del Libro"}</h1>
+                                <p className="font-patrick text-2xl text-slate-400 italic">scritto da {author || "Autore"}</p>
                             </div>
                         ) : (
                             <div className={`w-full ${settings.fontFamily}`} style={{ fontSize: `${settings.fontSize}px`, color: settings.textColor }} contentEditable={!isPrint} suppressContentEditableWarning onBlur={(e) => updatePageData(index, 'text', e.currentTarget.innerText)}>
-                                {page.text || "Testo della pagina..."}
+                                {page.text || "Clicca per inserire il testo della pagina..."}
                             </div>
                         )}
                         <div className="absolute bottom-6 w-full text-center text-[10px] font-black text-slate-200 tracking-widest uppercase">
@@ -242,82 +269,97 @@
             );
 
             return (
-                <div className="flex h-screen bg-slate-100 font-andika">
+                <div className="flex h-screen bg-slate-100 font-andika overflow-hidden">
                     <div className="print-only">{pages.map((p, i) => <PageView key={p.id} page={p} index={i} isPrint={true} />)}</div>
 
-                    {/* SIDEBAR SINISTRA */}
+                    {/* SIDEBAR SINISTRA: CONFIGURAZIONE */}
                     <aside className="no-print w-80 bg-white border-r flex flex-col shadow-2xl z-50">
-                        <div className="p-6 border-b bg-slate-900 text-white">
+                        <div className="p-6 border-b bg-slate-900 text-white flex flex-col">
                             <h2 className="text-2xl font-amatic tracking-widest uppercase">✨ StoryVisualizer</h2>
+                            <p className="text-[8px] text-slate-400 tracking-tighter uppercase mt-1">AI-Powered Creative Studio</p>
                         </div>
                         <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                             <div className="space-y-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Chiave API</label>
-                                <input type="password" placeholder="Gemini API Key" className="w-full p-2 text-xs border rounded-lg" value={manualKey} onChange={e => setManualKey(e.target.value)} />
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Configurazione API</label>
+                                <input type="password" placeholder="Inserisci la tua Gemini API Key" className="w-full p-3 text-xs border rounded-lg focus:ring-1 ring-slate-300 outline-none" value={manualKey} onChange={e => setManualKey(e.target.value)} />
+                                <p className="text-[9px] text-slate-400 italic">La chiave viene salvata localmente nel browser.</p>
                             </div>
                             <div className="space-y-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Libro</label>
-                                <input type="text" placeholder="Titolo" className="w-full p-2 text-sm border rounded-lg font-bold" value={title} onChange={e => setTitle(e.target.value)} />
-                                <input type="text" placeholder="Autore" className="w-full p-2 text-sm border rounded-lg" value={author} onChange={e => setAuthor(e.target.value)} />
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Info Libro</label>
+                                <input type="text" placeholder="Titolo della storia" className="w-full p-3 text-sm border rounded-lg font-bold" value={title} onChange={e => setTitle(e.target.value)} />
+                                <input type="text" placeholder="Nome dell'autore" className="w-full p-3 text-sm border rounded-lg" value={author} onChange={e => setAuthor(e.target.value)} />
                             </div>
                             <div className="space-y-3 pt-4 border-t">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Storia Completa</label>
-                                <textarea className="w-full h-40 p-3 text-xs border rounded-lg resize-none outline-none focus:ring-1 ring-slate-400" placeholder="Incolla qui la storia..." value={fullText} onChange={e => setFullText(e.target.value)} />
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Testo dell'idea</label>
+                                <textarea className="w-full h-40 p-3 text-xs border rounded-lg resize-none outline-none focus:ring-1 ring-slate-300 leading-relaxed" placeholder="Scrivi qui la tua storia o una breve descrizione..." value={fullText} onChange={e => setFullText(e.target.value)} />
                                 <div className="flex justify-between items-center text-[10px] font-bold text-slate-400">
-                                    <span>Pagine: {numScenes}</span>
-                                    <input type="range" min="3" max="12" value={numScenes} onChange={e => setNumScenes(parseInt(e.target.value))} className="accent-slate-900" />
+                                    <span>Numero di Pagine: {numScenes}</span>
+                                    <input type="range" min="3" max="15" value={numScenes} onChange={e => setNumScenes(parseInt(e.target.value))} className="accent-slate-900" />
                                 </div>
-                                <button onClick={analyzeStory} disabled={isAnalyzing || !fullText} className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold text-[10px] uppercase tracking-widest shadow-lg hover:bg-black transition-all">
-                                    {isAnalyzing ? 'Elaborazione...' : '🧠 Crea Storyboard'}
+                                <button onClick={analyzeStory} disabled={isAnalyzing || !fullText} className="w-full py-4 bg-slate-900 text-white rounded-xl font-bold text-[10px] uppercase tracking-widest shadow-lg hover:bg-black transition-all active:scale-95 disabled:opacity-50">
+                                    {isAnalyzing ? 'Elaborazione in corso...' : '🧠 Analizza e Crea Storia'}
                                 </button>
                             </div>
                             <div className="pt-4 border-t grid grid-cols-2 gap-2">
-                                <button onClick={() => fileInputRef.current.click()} className="py-2 bg-slate-100 text-[9px] font-black uppercase rounded border">📥 Carica</button>
+                                <button onClick={() => fileInputRef.current.click()} className="py-2.5 bg-slate-100 text-[9px] font-black uppercase rounded-lg border hover:bg-slate-200 transition-colors">📥 Importa</button>
                                 <button onClick={() => {
                                     const blob = new Blob([JSON.stringify({title, author, fullText, pages, settings})], {type: 'application/json'});
-                                    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${title || 'progetto'}.json`; a.click();
-                                }} disabled={pages.length === 0} className="py-2 bg-slate-100 text-[9px] font-black uppercase rounded border">📤 Salva</button>
+                                    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${title || 'mio-libro'}.json`; a.click();
+                                }} disabled={pages.length === 0} className="py-2.5 bg-slate-100 text-[9px] font-black uppercase rounded-lg border hover:bg-slate-200 transition-colors">📤 Esporta</button>
                                 <input type="file" ref={fileInputRef} className="hidden" onChange={async (e) => {
                                     const file = e.target.files[0]; if(!file) return;
-                                    const data = JSON.parse(await file.text());
-                                    setTitle(data.title); setAuthor(data.author); setFullText(data.fullText); setPages(data.pages); setSettings(data.settings);
+                                    try {
+                                        const data = JSON.parse(await file.text());
+                                        setTitle(data.title || ''); setAuthor(data.author || ''); setFullText(data.fullText || ''); 
+                                        setPages(data.pages || []); setSettings(data.settings || settings);
+                                        setCurrentIndex(0);
+                                    } catch (err) { alert("File non valido"); }
                                 }} />
                             </div>
                         </div>
                     </aside>
 
-                    {/* MAIN AREA */}
-                    <main className="no-print flex-1 flex flex-col items-center justify-center p-12 bg-slate-50 relative">
-                        <div className="absolute top-10 flex items-center gap-4 z-40">
-                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-3 rounded-full shadow hover:scale-110 active:scale-95 transition-all" disabled={currentIndex === 0}>❮</button>
-                            <span className="bg-white px-8 py-2.5 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest border shadow-sm">
-                                {pages.length > 0 ? (currentIndex === 0 ? 'COPERTINA' : `PAGINA ${currentIndex} / ${pages.length - 1}`) : 'PRONTO'}
+                    {/* MAIN AREA: LIBRO */}
+                    <main className="no-print flex-1 flex flex-col items-center justify-center p-12 bg-slate-50 relative overflow-hidden">
+                        <div className="absolute top-10 flex items-center gap-6 z-40">
+                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="bg-white p-4 rounded-full shadow-lg hover:scale-110 active:scale-95 transition-all disabled:opacity-30" disabled={currentIndex === 0}>❮</button>
+                            <span className="bg-white px-10 py-3 rounded-full text-[11px] font-black text-slate-500 uppercase tracking-widest border shadow-sm select-none">
+                                {pages.length > 0 ? (currentIndex === 0 ? 'COPERTINA' : `PAGINA ${currentIndex} DI ${pages.length - 1}`) : 'PRONTO'}
                             </span>
-                            <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-3 rounded-full shadow hover:scale-110 active:scale-95 transition-all" disabled={currentIndex === pages.length - 1}>❯</button>
+                            <button onClick={() => setCurrentIndex(Math.min(pages.length - 1, currentIndex + 1))} className="bg-white p-4 rounded-full shadow-lg hover:scale-110 active:scale-95 transition-all disabled:opacity-30" disabled={currentIndex === pages.length - 1}>❯</button>
                         </div>
+                        
                         {pages.length > 0 ? (
                             <div className="w-full flex flex-col items-center animate-in zoom-in duration-300">
                                 <PageView page={pages[currentIndex]} index={currentIndex} />
                             </div>
                         ) : (
-                            <div className="text-center opacity-10 select-none"><span className="text-[12rem]">📖</span></div>
+                            <div className="text-center opacity-10 select-none flex flex-col items-center">
+                                <span className="text-[14rem]">📖</span>
+                                <p className="text-2xl font-black uppercase tracking-widest mt-4">Inizia a scrivere la tua storia</p>
+                            </div>
                         )}
-                        {status && <div className="absolute bottom-10 px-6 py-2 bg-white rounded-full shadow-lg border text-[10px] font-black text-indigo-500 uppercase tracking-widest animate-bounce">{status}</div>}
+
+                        {status && (
+                            <div className="absolute bottom-12 px-8 py-3 bg-slate-900 text-white rounded-full shadow-2xl text-[10px] font-black uppercase tracking-[0.3em] animate-pulse z-50">
+                                {status}
+                            </div>
+                        )}
                     </main>
 
-                    {/* SIDEBAR DESTRA: EDITOR SCENA CON MENU A TENDINA RIPRISTINATO */}
+                    {/* SIDEBAR DESTRA: EDITOR SCENA (CON MENU STILI) */}
                     <aside className="no-print w-80 bg-white border-l flex flex-col shadow-2xl z-50">
                         <div className="p-6 border-b">
-                            <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Editor Scena Corrente</h3>
+                            <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Editor Scena Attiva</h3>
                         </div>
                         
                         {pages.length > 0 ? (
                             <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-                                {/* MENU A TENDINA RIPRISTINATO */}
+                                {/* MENU A TENDINA STILI */}
                                 <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🎨 Scegli lo Stile Artistico</label>
+                                    <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🎨 Stile Artistico Pagina</label>
                                     <select 
-                                        className="w-full p-3 text-xs border rounded-xl bg-slate-50 font-bold outline-none focus:ring-2 ring-indigo-500 cursor-pointer"
+                                        className="w-full p-4 text-xs border rounded-xl bg-slate-50 font-bold outline-none focus:ring-2 ring-indigo-400 cursor-pointer shadow-sm"
                                         value={pages[currentIndex].styleId || STYLES[0].id}
                                         onChange={e => updatePageData(currentIndex, 'styleId', e.target.value)}
                                     >
@@ -331,45 +373,50 @@
                                     <button 
                                         onClick={() => generateImage(currentIndex)}
                                         disabled={isGeneratingImg === pages[currentIndex].id}
-                                        className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-[10px] shadow-xl hover:bg-indigo-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50"
+                                        className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-bold text-[10px] shadow-xl hover:bg-indigo-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50"
                                     >
-                                        {pages[currentIndex].imageUrl ? '🔄 Rigenera Immagine' : '✨ Dipingi questa Scena'}
+                                        {pages[currentIndex].imageUrl ? '🔄 Rigenera Illustrazione' : '✨ Crea Illustrazione'}
                                     </button>
                                 </div>
 
                                 <div className="space-y-4 pt-6 border-t">
-                                    <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione Visiva (Prompt)</label>
+                                    <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">📝 Descrizione Visiva (Prompt AI)</label>
                                     <textarea 
-                                        className="w-full h-32 p-3 text-[11px] bg-slate-50 border rounded-lg resize-none outline-none focus:ring-1 ring-indigo-300 leading-relaxed font-medium" 
+                                        className="w-full h-36 p-4 text-[11px] bg-slate-50 border rounded-xl resize-none outline-none focus:ring-1 ring-indigo-300 leading-relaxed font-medium" 
                                         value={pages[currentIndex].imagePrompt} 
                                         onChange={e => updatePageData(currentIndex, 'imagePrompt', e.target.value)} 
                                     />
-                                    <div className="flex justify-between items-center text-[9px] font-black text-slate-400 uppercase">
-                                        <span>Zoom Immagine</span>
+                                    <div className="flex justify-between items-center text-[9px] font-black text-slate-400 uppercase px-1">
+                                        <span>Scala Immagine</span>
                                         <span className="text-indigo-600 font-bold">{Math.round((pages[currentIndex].imageScale || 1) * 100)}%</span>
                                     </div>
-                                    <input type="range" min="0.5" max="2" step="0.1" value={pages[currentIndex].imageScale || 1} onChange={e => updatePageData(currentIndex, 'imageScale', parseFloat(e.target.value))} className="w-full accent-indigo-600" />
+                                    <input type="range" min="0.5" max="2" step="0.05" value={pages[currentIndex].imageScale || 1} onChange={e => updatePageData(currentIndex, 'imageScale', parseFloat(e.target.value))} className="w-full accent-indigo-600" />
                                 </div>
 
                                 <div className="space-y-4 pt-6 border-t">
-                                    <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Carattere del Libro</label>
-                                    <select className="w-full p-2.5 text-xs border rounded-xl outline-none bg-white font-bold" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
-                                        <option value="font-patrick">Scrittura a mano</option>
-                                        <option value="font-andika">Senza Grazie (Moderno)</option>
+                                    <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest block">🖋️ Tipografia del Libro</label>
+                                    <select className="w-full p-3 text-xs border rounded-xl outline-none bg-white font-bold" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
+                                        <option value="font-patrick">Patrick Hand (Manuale)</option>
+                                        <option value="font-andika">Andika (Pulito)</option>
                                         <option value="font-opendyslexic">OpenDyslexic (Accessibile)</option>
+                                        <option value="font-playfair">Playfair Display (Classico)</option>
                                     </select>
-                                    <input type="range" min="16" max="44" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} className="w-full accent-indigo-600" />
+                                    <div className="flex justify-between items-center text-[9px] font-black text-slate-400 uppercase px-1">
+                                        <span>Dimensione Font</span>
+                                        <span>{settings.fontSize}px</span>
+                                    </div>
+                                    <input type="range" min="14" max="60" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} className="w-full accent-indigo-600" />
                                 </div>
                             </div>
                         ) : (
                             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center opacity-30 italic space-y-4">
-                                <div className="text-4xl animate-bounce">☝️</div>
-                                <p className="text-[10px] font-black uppercase tracking-widest">Analizza una storia per sbloccare l'editor</p>
+                                <div className="text-5xl animate-bounce">🎨</div>
+                                <p className="text-[10px] font-black uppercase tracking-widest leading-relaxed">Analizza una storia per attivare gli strumenti di creazione</p>
                             </div>
                         )}
 
-                        <div className="p-6 border-t mt-auto">
-                            <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full py-4 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-black transition-all active:scale-95 disabled:opacity-30">🖨️ Stampa Libro / PDF</button>
+                        <div className="p-6 border-t mt-auto bg-slate-50/50">
+                            <button onClick={() => window.print()} disabled={pages.length === 0} className="w-full py-5 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-black transition-all active:scale-95 disabled:opacity-30">🖨️ Esporta PDF / Stampa</button>
                         </div>
                     </aside>
                 </div>
