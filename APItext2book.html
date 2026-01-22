@@ -109,10 +109,9 @@
             const [isAnalyzing, setIsAnalyzing] = useState(false);
             const [isGeneratingImg, setIsGeneratingImg] = useState(null); 
             const [status, setStatus] = useState('');
-            const [quotaZeroError, setQuotaZeroError] = useState(false);
             const [numScenes, setNumScenes] = useState(6);
+            const [hasKey, setHasKey] = useState(false);
             
-            const [manualKey, setManualKey] = useState(localStorage.getItem('gemini_api_key') || '');
             const [settings, setSettings] = useState({
                 fontFamily: 'font-patrick',
                 fontSize: 22,
@@ -122,31 +121,28 @@
             const fileInputRef = useRef(null);
 
             useEffect(() => {
-                localStorage.setItem('gemini_api_key', manualKey);
-            }, [manualKey]);
-
-            const callAI = async (fn) => {
-                try {
-                    setQuotaZeroError(false);
-                    return await fn();
-                } catch (err) {
-                    const msg = err.message || "";
-                    if (msg.includes("limit: 0") || msg.includes("RESOURCE_EXHAUSTED")) {
-                        if (msg.includes("limit: 0")) setQuotaZeroError(true);
-                        throw new Error("Quota insufficiente o servizio disabilitato.");
+                const checkKey = async () => {
+                    if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+                        const selected = await window.aistudio.hasSelectedApiKey();
+                        setHasKey(selected);
                     }
-                    throw err;
+                };
+                checkKey();
+            }, []);
+
+            const handleSelectKey = async () => {
+                if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+                    await window.aistudio.openSelectKey();
+                    setHasKey(true);
                 }
             };
 
             const analyzeStory = async () => {
-                const key = manualKey || process.env.API_KEY;
-                if (!key) return alert("Per favore, inserisci la tua API Key Gemini nella barra laterale.");
                 setIsAnalyzing(true);
                 setStatus('Analisi racconto in corso...');
                 try {
-                    const ai = new GoogleGenAI({ apiKey: key });
-                    const response = await callAI(() => ai.models.generateContent({
+                    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                    const response = await ai.models.generateContent({
                         model: 'gemini-3-flash-preview',
                         contents: `Dividi questa storia in ${numScenes} scene. 
                         Restituisci solo JSON: [{"displayText": "testo", "imagePrompt": "descrizione visiva inglese"}]
@@ -166,7 +162,7 @@
                                 }
                             }
                         }
-                    }));
+                    });
 
                     const scenes = JSON.parse(response.text);
 
@@ -184,30 +180,30 @@
                     setCurrentIndex(0);
                     setStatus('Storyboard completato!');
                 } catch (err) { 
-                    setStatus(`Errore analisi: ${err.message}`); 
+                    handleApiError(err, "Analisi");
                 } finally { setIsAnalyzing(false); }
             };
 
             const generateImage = async (pageIndex) => {
-                const key = manualKey || process.env.API_KEY;
-                if (!key) return alert("Inserisci la tua API Key per generare immagini.");
-                
                 const page = pages[pageIndex];
                 const pageStyle = STYLES.find(s => s.id === page.styleId) || STYLES[0];
                 
                 setIsGeneratingImg(page.id);
                 setStatus(`Generazione immagine...`);
                 try {
-                    const ai = new GoogleGenAI({ apiKey: key });
-                    const response = await callAI(() => ai.models.generateContent({
-                        model: 'gemini-2.5-flash-image',
-                        contents: `${page.imagePrompt}. Style: ${pageStyle.prompt}. High quality illustration for kids book.`,
-                        config: { imageConfig: { aspectRatio: "1:1" } }
-                    }));
+                    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-3-pro-image-preview',
+                        contents: {
+                            parts: [{ text: `${page.imagePrompt}. Style: ${pageStyle.prompt}. High quality illustration for kids book.` }]
+                        },
+                        config: { 
+                            imageConfig: { aspectRatio: "1:1", imageSize: "1K" }
+                        }
+                    });
                     
                     let base64 = "";
-                    const parts = response.candidates?.[0]?.content?.parts || [];
-                    for (const part of parts) {
+                    for (const part of response.candidates[0].content.parts) {
                         if (part.inlineData) {
                             base64 = `data:image/png;base64,${part.inlineData.data}`;
                             break;
@@ -221,26 +217,30 @@
                         throw new Error("L'AI non ha prodotto dati immagine.");
                     }
                 } catch (err) { 
-                    setStatus(`Errore immagine: ${err.message}`); 
+                    handleApiError(err, "Immagine");
                 } finally { setIsGeneratingImg(null); }
             };
 
+            const handleApiError = (err, context) => {
+                console.error(err);
+                if (err.message.includes("Requested entity was not found")) {
+                    setHasKey(false);
+                    setStatus("Errore: Chiave API non valida o non trovata. Per favore riconnettila.");
+                    handleSelectKey();
+                } else {
+                    setStatus(`Errore ${context}: ${err.message}`);
+                }
+            };
+
             const exportToJson = () => {
-                const data = {
-                    title,
-                    author,
-                    fullText,
-                    numScenes,
-                    settings,
-                    pages
-                };
+                const data = { title, author, fullText, numScenes, settings, pages };
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
                 link.download = `${title || 'mio-libro'}.json`;
                 link.click();
-                setStatus('Progetto esportato con successo!');
+                setStatus('Progetto esportato!');
             };
 
             const importFromJson = (event) => {
@@ -258,9 +258,7 @@
                         setPages(data.pages || []);
                         setCurrentIndex(0);
                         setStatus('Progetto caricato!');
-                    } catch (err) {
-                        alert("Errore nel caricamento del file JSON.");
-                    }
+                    } catch (err) { alert("Errore nel caricamento del file JSON."); }
                 };
                 reader.readAsText(file);
             };
@@ -270,7 +268,7 @@
             };
 
             const PageView = ({ page, index, isPrint = false }) => (
-                <div className={`flex w-full bg-white book-spread overflow-hidden relative ${isPrint ? 'print-page shadow-none' : 'aspect-[1.6/1] max-w-5xl rounded-xl border shadow-2xl'}`}>
+                <div className={`flex w-full bg-white book-spread overflow-hidden relative ${isPrint ? 'print-page shadow-none border-none' : 'aspect-[1.6/1] max-w-5xl rounded-xl border shadow-2xl'}`}>
                     <div className="book-spine" />
                     <div className="page-side w-1/2 h-full bg-slate-50 border-r relative flex items-center justify-center p-4">
                         {isGeneratingImg === page.id ? (
@@ -324,16 +322,19 @@
                                 <input type="file" ref={fileInputRef} onChange={importFromJson} className="hidden" accept=".json" />
                             </div>
 
-                            <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-100 space-y-2">
-                                <label className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex justify-between">
-                                    <span>Chiave API Gemini</span>
-                                    <span className="text-indigo-600">SICURA 🔒</span>
+                            {/* API KEY CONFIG */}
+                            <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-100 space-y-3">
+                                <label className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex justify-between items-center">
+                                    <span>Stato API</span>
+                                    {hasKey ? <span className="text-green-600">CONNESSO ✅</span> : <span className="text-red-500">DA COLLEGARE ❌</span>}
                                 </label>
-                                <input type="password" placeholder="Inserisci la tua chiave" className="w-full p-2.5 text-xs border border-indigo-200 rounded-lg outline-none focus:ring-2 ring-indigo-500/20" value={manualKey} onChange={e => setManualKey(e.target.value)} />
+                                <button onClick={handleSelectKey} className="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 shadow-md transition-all active:scale-95">
+                                    {hasKey ? "Cambia Progetto API" : "🔑 Configura API Key"}
+                                </button>
                                 <p className="text-[8px] text-indigo-700/70 leading-tight">
-                                    Questa chiave è salvata solo nel tuo browser. L'uso verrà fatturato al <strong>tuo account Google Cloud</strong>.
+                                    Usa il tuo account Google Cloud. I costi saranno fatturati direttamente al tuo progetto. 
+                                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline ml-1 font-bold">Info Billing</a>
                                 </p>
-                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-[8px] text-indigo-600 font-bold hover:underline block text-right">Ottieni Chiave →</a>
                             </div>
                             
                             <div className="space-y-2 pt-3 border-t">
@@ -349,7 +350,7 @@
                                     <span>Numero Scene: {numScenes}</span>
                                     <input type="range" min="3" max="20" value={numScenes} onChange={e => setNumScenes(parseInt(e.target.value))} className="w-24 accent-slate-900" />
                                 </div>
-                                <button onClick={analyzeStory} disabled={isAnalyzing || !fullText.trim()} className="w-full py-4 bg-slate-900 text-white rounded-lg font-bold text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-50 shadow-lg mt-2">
+                                <button onClick={analyzeStory} disabled={isAnalyzing || !fullText.trim() || !hasKey} className="w-full py-4 bg-slate-900 text-white rounded-lg font-bold text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-50 shadow-lg mt-2">
                                     {isAnalyzing ? 'Elaborazione...' : '🧠 Crea Storyboard'}
                                 </button>
                             </div>
@@ -378,17 +379,6 @@
                         {status && (
                             <div className="absolute bottom-10 px-6 py-4 bg-slate-900 text-white rounded-xl shadow-2xl text-[10px] font-black uppercase tracking-widest z-50 text-center max-w-2xl border-t-2 border-indigo-500">
                                 {status}
-                                {quotaZeroError && (
-                                    <div className="mt-3 p-3 bg-red-600/20 border border-red-500/50 rounded-lg text-red-100 normal-case font-medium text-[11px] space-y-2">
-                                        <p className="font-bold uppercase text-[10px] text-white">⚠️ Quota Immagini Disabilitata (Limit: 0)</p>
-                                        <p>Google ha bloccato questo account per la generazione di immagini. Questo accade spesso con account senza fatturazione attiva.</p>
-                                        <div className="pt-2 flex flex-wrap gap-2 justify-center">
-                                            <a href="https://console.cloud.google.com/billing" target="_blank" className="bg-white text-red-700 px-3 py-1.5 rounded-md font-bold text-[9px] uppercase shadow hover:bg-slate-100">1. Attiva Billing Google Cloud →</a>
-                                            <span className="bg-slate-800/50 px-3 py-1.5 rounded-md font-bold text-[9px] uppercase">2. Prova con VPN (USA)</span>
-                                        </div>
-                                        <p className="text-[9px] opacity-70 italic text-center w-full">Nota: Se sei l'utente dell'app, i costi saranno fatturati sulla tua carta, non su quella dell'autore dell'app.</p>
-                                    </div>
-                                )}
                             </div>
                         )}
                     </main>
@@ -406,8 +396,8 @@
                                     <select className="w-full p-3 text-[11px] border rounded-lg bg-slate-50 font-bold outline-none cursor-pointer" value={pages[currentIndex].styleId} onChange={e => updatePageData(currentIndex, 'styleId', e.target.value)}>
                                         {STYLES.map(style => <option key={style.id} value={style.id}>{style.icon} {style.label}</option>)}
                                     </select>
-                                    <button onClick={() => generateImage(currentIndex)} disabled={isGeneratingImg === pages[currentIndex].id} className="w-full py-4 bg-indigo-600 text-white rounded-lg font-bold text-[10px] shadow-lg hover:bg-indigo-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50">
-                                        ✨ Genera Illustrazione
+                                    <button onClick={() => generateImage(currentIndex)} disabled={isGeneratingImg === pages[currentIndex].id || !hasKey} className="w-full py-4 bg-indigo-600 text-white rounded-lg font-bold text-[10px] shadow-lg hover:bg-indigo-700 transition-all uppercase tracking-widest active:scale-95 disabled:opacity-50">
+                                        ✨ Genera Illustrazione (Pro)
                                     </button>
                                 </div>
                                 <div className="space-y-3 pt-5 border-t">
