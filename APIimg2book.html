@@ -1,388 +1,457 @@
 
-import React, { useState, useRef, useEffect } from 'react';
-import { createRoot } from 'react-dom/client';
-import { GoogleGenAI, Type } from "@google/genai";
-
-// --- Costanti e Tipi ---
-enum ImageStyle {
-  REALISTIC = 'realistico',
-  FUTURISTIC = 'futuristico',
-  MANGA = 'manga',
-  PENCIL = 'matita',
-  DISNEY = 'fumetto disneyano',
-  OIL = 'pittura a olio',
-  WATERCOLOR = 'acquerello'
-}
-
-const STYLE_PROMPTS: Record<ImageStyle, string> = {
-  [ImageStyle.REALISTIC]: "Professional photography style, cinematic lighting, 8k, highly realistic, masterpiece quality",
-  [ImageStyle.FUTURISTIC]: "Sci-fi concept art, neon lighting, high-tech, futuristic atmosphere, intricate digital art",
-  [ImageStyle.MANGA]: "Modern Japanese manga illustration, clean lines, vibrant cel-shading, professional anime art",
-  [ImageStyle.PENCIL]: "Detailed graphite pencil sketch, artistic hand-drawn style, textured paper, professional shading",
-  [ImageStyle.DISNEY]: "3D animation style, expressive characters, soft global illumination, vibrant colors, Pixar-inspired",
-  [ImageStyle.OIL]: "Classic oil painting, visible brushstrokes, rich textures, traditional art masterpiece",
-  [ImageStyle.WATERCOLOR]: "Artistic watercolor painting, soft edges, ink details, beautiful paper texture"
-};
-
-const FONTS = [
-  { name: 'Scrittura', value: 'font-patrick' },
-  { name: 'Leggibile', value: 'font-opendyslexic' },
-  { name: 'Pulito', value: 'font-andika' },
-  { name: 'Artistico', value: 'font-amatic' },
-  { name: 'Classico', value: 'font-playfair' }
-];
-
-interface StoryPage {
-  id: string;
-  text: string;
-  imageUrl: string;
-  isLoading: boolean;
-}
-
-// --- Componente Principale ---
-const App = () => {
-  const [hasKey, setHasKey] = useState<boolean | null>(null);
-  const [pages, setPages] = useState<StoryPage[]>([]);
-  const [title, setTitle] = useState('La mia ricerca');
-  const [author, setAuthor] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [numPages, setNumPages] = useState(5);
-  const [currentIndex, setCurrentIndex] = useState(-1); 
-  const [currentStyle, setCurrentStyle] = useState<ImageStyle>(ImageStyle.DISNEY);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [status, setStatus] = useState('');
-  
-  const [settings, setSettings] = useState({
-    fontFamily: 'font-andika',
-    fontSize: 22,
-    textColor: '#1e293b'
-  });
-
-  const importRef = useRef<HTMLInputElement>(null);
-
-  // --- Inizializzazione Chiave API ---
-  useEffect(() => {
-    const checkKey = async () => {
-      const selected = await window.aistudio.hasSelectedApiKey();
-      setHasKey(selected);
-    };
-    checkKey();
-  }, []);
-
-  const handleSelectKey = async () => {
-    await window.aistudio.openSelectKey();
-    setHasKey(true); // Procediamo assumendo successo come da istruzioni
-  };
-
-  // --- Logica AI ---
-  const generateContent = async () => {
-    if (!prompt.trim()) return alert("Inserisci un prompt per iniziare!");
-    setIsProcessing(true);
-    setStatus('L\'AI sta elaborando il contenuto...');
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Storybook Studio - Documentary Engine</title>
     
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Genera un contenuto strutturato sull'argomento: "${prompt}". 
-        Suddividilo in esattamente ${numPages} sezioni sequenziali. 
-        Se è una ricerca (es: Sudafrica), sviscera l'argomento in modo professionale.
-        Se è una storia, rendila avvincente.
-        Ritorna un array JSON di stringhe, senza markdown.`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING }
-          }
+    <!-- Librerie Esterne -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/opendyslexic@2/opendyslexic.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Andika&family=Amatic+SC:wght@700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    
+    <style>
+        .font-opendyslexic { font-family: 'OpenDyslexic', sans-serif; }
+        .font-patrick { font-family: 'Patrick Hand', cursive; }
+        .font-andika { font-family: 'Andika', sans-serif; }
+        .font-amatic { font-family: 'Amatic SC', cursive; }
+        .font-playfair { font-family: 'Playfair Display', serif; }
+
+        body { background-color: #f8fafc; color: #0f172a; margin: 0; }
+
+        /* Struttura Libretto A4 Orizzontale */
+        .book-spread {
+            background: white;
+            width: 297mm;
+            height: 210mm;
+            display: flex;
+            position: relative;
+            overflow: hidden;
+            border-radius: 4px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
-      });
 
-      const texts = JSON.parse(response.text || "[]");
-      const newPages = texts.map((t: string) => ({
-        id: Math.random().toString(36).substr(2, 9),
-        text: t,
-        imageUrl: '',
-        isLoading: false
-      }));
-      
-      setPages(newPages);
-      setCurrentIndex(0);
-      setStatus(`Testo generato (${newPages.length} pagine).`);
-    } catch (err) {
-      console.error(err);
-      setStatus('Errore generazione testo.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const generateImageForPage = async (index: number) => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const up = [...pages];
-    up[index].isLoading = true;
-    setPages([...up]);
-
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-image-preview', // High Quality Mode
-        contents: { 
-          parts: [{ text: `High quality book illustration: "${up[index].text}". Style: ${STYLE_PROMPTS[currentStyle]}. Masterpiece.` }] 
-        },
-        config: { 
-          imageConfig: { aspectRatio: "1:1", imageSize: "1K" }
+        /* Piega centrale realistica */
+        .book-spine {
+            background: linear-gradient(to right, 
+                rgba(0,0,0,0) 0%, 
+                rgba(0,0,0,0.03) 48%, 
+                rgba(0,0,0,0.1) 50%, 
+                rgba(0,0,0,0.03) 52%, 
+                rgba(0,0,0,0) 100%);
+            width: 60px;
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            pointer-events: none;
         }
-      });
 
-      const imgPart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
-      if (imgPart?.inlineData) {
-        up[index].imageUrl = `data:image/png;base64,${imgPart.inlineData.data}`;
+        .page-side {
+            width: 50%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            padding: 4rem;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+
+        @media print {
+            @page { size: landscape; margin: 0; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .book-spread {
+                box-shadow: none !important;
+                page-break-after: always !important;
+                width: 100% !important;
+                height: 100vh !important;
+                border: none !important;
+            }
+        }
+        .print-only { display: none; }
+    </style>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@19.0.0",
+        "react-dom": "https://esm.sh/react-dom@19.0.0",
+        "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+        "@google/genai": "https://esm.sh/@google/genai@1.38.0"
       }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      up[index].isLoading = false;
-      setPages([...up]);
     }
-  };
+    </script>
+</head>
+<body class="h-screen overflow-hidden">
+    <div id="root"></div>
 
-  const generateAllImages = async () => {
-    if (pages.length === 0) return;
-    setIsProcessing(true);
-    for (let i = 0; i < pages.length; i++) {
-      setStatus(`Elaborazione immagine ${i + 1}/${pages.length}...`);
-      await generateImageForPage(i);
-    }
-    setIsProcessing(false);
-    setStatus('Libro completato! ✨');
-    setTimeout(() => setStatus(''), 4000);
-  };
+    <!-- Logica Applicativa in Babel/JSX -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useRef, useEffect } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { GoogleGenAI, Type } from "@google/genai";
 
-  // --- Export / Import ---
-  const exportProject = () => {
-    if (pages.length === 0) return alert("Genera del contenuto prima di esportare.");
-    const data = { title, author, pages, settings, currentStyle, prompt, numPages };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    
-    // Nome file pulito basato sul titolo attuale
-    const fileName = (title || 'progetto_libro')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]/gi, '_')
-      .concat('.json');
+        // --- Costanti ---
+        const ImageStyle = {
+            REALISTIC: 'realistico',
+            FUTURISTIC: 'futuristico',
+            MANGA: 'manga',
+            PENCIL: 'matita',
+            DISNEY: 'fumetto disneyano',
+            OIL: 'pittura a olio',
+            WATERCOLOR: 'acquerello'
+        };
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+        const STYLE_PROMPTS = {
+            [ImageStyle.REALISTIC]: "Professional photography, cinematic lighting, 8k, realistic textures, sharp focus",
+            [ImageStyle.FUTURISTIC]: "Cyberpunk concept art, neon lighting, high-tech, futuristic atmosphere",
+            [ImageStyle.MANGA]: "Modern Japanese manga illustration, clean lines, vibrant cel-shading",
+            [ImageStyle.PENCIL]: "Detailed graphite sketch, hand-drawn, artistic shading, paper texture",
+            [ImageStyle.DISNEY]: "Disney/Pixar style 3D animation, expressive characters, soft lighting",
+            [ImageStyle.OIL]: "Classic oil painting, thick brushstrokes, rich textures, fine art quality",
+            [ImageStyle.WATERCOLOR]: "Artistic watercolor painting, soft edges, ink details, paper bleed"
+        };
 
-  const importProject = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const d = JSON.parse(ev.target?.result as string);
-        setTitle(d.title || '');
-        setAuthor(d.author || '');
-        setPages(d.pages || []);
-        setSettings(d.settings || settings);
-        setCurrentStyle(d.currentStyle || ImageStyle.DISNEY);
-        setPrompt(d.prompt || '');
-        setNumPages(d.numPages || d.pages?.length || 5);
-        setCurrentIndex(-1);
-      } catch (err) { alert("File JSON non valido."); }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
+        const FONTS = [
+            { name: 'Scrittura', value: 'font-patrick' },
+            { name: 'Leggibile', value: 'font-opendyslexic' },
+            { name: 'Pulito', value: 'font-andika' },
+            { name: 'Artistico', value: 'font-amatic' },
+            { name: 'Classico', value: 'font-playfair' }
+        ];
 
-  // --- UI Components ---
-  if (hasKey === false) {
-    return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-900 text-white p-10 text-center">
-        <div className="max-w-md space-y-8">
-          <div className="text-6xl mb-6">📖</div>
-          <h1 className="text-4xl font-amatic font-bold tracking-widest">SBLOCCA IL POTERE DELL'AI</h1>
-          <p className="text-slate-400 text-sm leading-relaxed">
-            Per generare ricerche e illustrazioni ad alta qualità (Gemini 3 Pro), è necessario selezionare una chiave API valida con fatturazione attiva.
-          </p>
-          <button 
-            onClick={handleSelectKey}
-            className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold tracking-widest shadow-2xl transition-all active:scale-95"
-          >
-            SELEZIONA CHIAVE API
-          </button>
-          <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="block text-[10px] text-slate-500 hover:text-indigo-400 underline uppercase tracking-widest">
-            Documentazione Fatturazione Google
-          </a>
-        </div>
-      </div>
-    );
-  }
+        // --- App Component ---
+        const App = () => {
+            const [isKeyActive, setIsKeyActive] = useState(null);
+            const [pages, setPages] = useState([]);
+            const [title, setTitle] = useState('La mia ricerca');
+            const [author, setAuthor] = useState('');
+            const [prompt, setPrompt] = useState('');
+            const [numPages, setNumPages] = useState(5);
+            const [currentIndex, setCurrentIndex] = useState(-1);
+            const [currentStyle, setCurrentStyle] = useState(ImageStyle.DISNEY);
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [status, setStatus] = useState('');
+            
+            const [settings, setSettings] = useState({
+                fontFamily: 'font-andika',
+                fontSize: 22,
+                textColor: '#1e293b'
+            });
 
-  const renderSpread = (idx: number) => {
-    if (idx === -1) { // Copertina Minimal
-      return (
-        <div className="book-spread flex-col items-center justify-center p-20 text-center bg-white shadow-2xl border border-slate-100">
-          <div className="space-y-10">
-            <h1 className="font-playfair text-7xl text-slate-900 uppercase tracking-tighter border-b-2 border-slate-200 pb-10">{title || "Titolo"}</h1>
-            <p className="font-patrick text-4xl text-slate-400">di {author || "Autore"}</p>
-          </div>
-          <div className="absolute bottom-10 text-[9px] text-slate-300 tracking-[0.6em] font-bold uppercase">Copertina</div>
-        </div>
-      );
-    }
+            const importRef = useRef(null);
 
-    if (idx === -2) { // Retro
-      return (
-        <div className="book-spread flex-col items-center justify-center p-20 bg-slate-50 text-slate-400 text-center border-l-[20px] border-slate-200 shadow-2xl">
-          <div className="text-4xl mb-6 opacity-30">📖</div>
-          <p className="text-[10px] tracking-[0.5em] font-bold uppercase mb-2">© {author || "Autore"} {new Date().getFullYear()}</p>
-          <p className="text-[8px] opacity-50 uppercase tracking-widest">Creato con AI Storybook Studio</p>
-        </div>
-      );
-    }
+            // --- Controllo API Key ---
+            useEffect(() => {
+                const checkKey = async () => {
+                    const active = await window.aistudio.hasSelectedApiKey();
+                    setIsKeyActive(active);
+                };
+                checkKey();
+            }, []);
 
-    const page = pages[idx];
-    return (
-      <div className="book-spread shadow-2xl">
-        <div className="book-spine" />
-        {/* Testo a Sinistra */}
-        <div className="page-side bg-slate-50 border-r border-slate-100 p-16">
-          <div 
-            className={`w-full text-center outline-none leading-relaxed overflow-y-auto max-h-full scrollbar-hide ${settings.fontFamily}`}
-            style={{ fontSize: `${settings.fontSize}px`, color: settings.textColor }}
-            contentEditable
-            suppressContentEditableWarning
-            onBlur={(e) => {
-              const up = [...pages];
-              up[idx].text = e.currentTarget.innerText;
-              setPages(up);
-            }}
-          >
-            {page.text}
-          </div>
-          <div className="absolute bottom-6 left-8 text-[9px] text-slate-300 font-bold uppercase tracking-widest">Testo</div>
-        </div>
-        {/* Immagine a Destra */}
-        <div className="page-side bg-white p-12">
-          {page.isLoading ? (
-            <div className="animate-pulse flex flex-col items-center gap-3">
-              <div className="w-10 h-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-              <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-[0.3em]">Pittura in corso...</span>
-            </div>
-          ) : page.imageUrl ? (
-            <img src={page.imageUrl} className="max-w-full max-h-full object-contain rounded shadow-lg border border-slate-50" />
-          ) : (
-            <div className="flex flex-col items-center opacity-20">
-              <span className="text-8xl mb-4">🎨</span>
-              <button onClick={() => generateImageForPage(idx)} className="text-[10px] font-black text-indigo-500 underline uppercase tracking-widest">Genera Immagine</button>
-            </div>
-          )}
-          <div className="absolute bottom-6 right-8 text-[9px] text-slate-300 font-bold uppercase tracking-widest">Pagina {idx + 1}</div>
-        </div>
-      </div>
-    );
-  };
+            const handleAuth = async () => {
+                await window.aistudio.openSelectKey();
+                setIsKeyActive(true);
+            };
 
-  return (
-    <div className="flex h-screen w-full bg-slate-100 font-andika">
-      {/* Sidebar Strumenti */}
-      <aside className="no-print w-80 bg-white border-r flex flex-col shadow-2xl z-50">
-        <div className="p-6 bg-slate-900 text-white">
-          <h2 className="text-2xl font-amatic font-bold tracking-[0.2em] uppercase">AI StoryStudio</h2>
-          <p className="text-[9px] font-bold uppercase opacity-50 tracking-widest">Documentary Creator</p>
-        </div>
+            // --- Generazione Testo ---
+            const generateStoryText = async () => {
+                if (!prompt.trim()) return alert("Inserisci un'istruzione per il libro!");
+                setIsProcessing(true);
+                setStatus('L\'AI sta scrivendo il contenuto...');
+                
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                try {
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-3-flash-preview',
+                        contents: `Genera un contenuto strutturato e informativo sull'argomento: "${prompt}". 
+                        Dividi il testo in esattamente ${numPages} sezioni sequenziali, ognuna adatta a una pagina di un libretto illustrato. 
+                        Ritorna SOLO un array JSON di stringhe, senza Markdown o commenti.`,
+                        config: {
+                            responseMimeType: "application/json",
+                            responseSchema: {
+                                type: Type.ARRAY,
+                                items: { type: Type.STRING }
+                            }
+                        }
+                    });
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
-          <section className="space-y-3">
-            <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">1. Info Libro</h3>
-            <input type="text" placeholder="Titolo" className="w-full p-2 text-sm border-b outline-none font-bold" value={title} onChange={e => setTitle(e.target.value)} />
-            <input type="text" placeholder="Autore" className="w-full p-2 text-sm border-b outline-none" value={author} onChange={e => setAuthor(e.target.value)} />
-          </section>
+                    const texts = JSON.parse(response.text || "[]");
+                    const newPages = texts.map(t => ({
+                        id: Math.random().toString(36).substr(2, 9),
+                        text: t,
+                        imageUrl: '',
+                        isLoading: false
+                    }));
+                    
+                    setPages(newPages);
+                    setCurrentIndex(0);
+                    setStatus(`Testo generato (${newPages.length} pagine). Crea ora le immagini.`);
+                } catch (err) {
+                    console.error(err);
+                    setStatus('Errore durante la scrittura.');
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
 
-          <section className="space-y-3 pt-2">
-            <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">2. Argomento</h3>
-            <textarea 
-              placeholder="Es: Sviscera l'argomento Sudafrica... oppure Storia tra Giorgio e Paola..."
-              className="w-full h-32 p-3 text-xs border rounded-xl outline-none focus:ring-2 ring-indigo-50 resize-none"
-              value={prompt}
-              onChange={e => setPrompt(e.target.value)}
-            />
-            <div className="flex justify-between items-center text-[9px] font-bold uppercase">
-              <span className="text-slate-400">Pagine</span>
-              <span className="text-indigo-600 font-black">{numPages}</span>
-            </div>
-            <input type="range" min="1" max="20" className="w-full accent-indigo-600" value={numPages} onChange={e => setNumPages(parseInt(e.target.value))} />
-            <button onClick={generateContent} disabled={isProcessing} className="w-full py-3 bg-indigo-600 text-white font-bold text-[10px] rounded-xl uppercase tracking-widest hover:bg-indigo-700 shadow-md">Genera Testo</button>
-          </section>
+            // --- Generazione Immagine ---
+            const generateImageForPage = async (index) => {
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                const up = [...pages];
+                up[index].isLoading = true;
+                setPages([...up]);
 
-          <section className="space-y-3 border-t pt-5">
-            <h3 className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">3. Illustrazioni</h3>
-            <select className="w-full p-2 text-xs border rounded-xl outline-none" value={currentStyle} onChange={e => setCurrentStyle(e.target.value as ImageStyle)}>
-              {Object.values(ImageStyle).map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-            </select>
-            <button 
-              onClick={generateAllImages}
-              disabled={isProcessing || pages.length === 0}
-              className={`w-full py-3 rounded-xl font-bold text-white text-[10px] uppercase shadow-md transition-all ${isProcessing ? 'bg-slate-300' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-            >
-              Genera Immagini (PRO)
-            </button>
-            {status && <p className="text-[9px] text-center font-bold text-indigo-500 animate-pulse uppercase tracking-tighter">{status}</p>}
-          </section>
+                try {
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-3-pro-image-preview',
+                        contents: { 
+                            parts: [{ text: `Masterpiece book illustration: "${up[index].text}". Style: ${STYLE_PROMPTS[currentStyle]}. High detail.` }] 
+                        },
+                        config: { 
+                            imageConfig: { aspectRatio: "1:1", imageSize: "1K" }
+                        }
+                    });
 
-          <section className="space-y-3 border-t pt-5">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stile Testo</h3>
-            <select className="w-full p-2 text-xs border rounded-lg" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
-              {FONTS.map(f => <option key={f.value} value={f.value}>{f.name}</option>)}
-            </select>
-            <input type="range" min="14" max="48" className="w-full accent-slate-400" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} />
-          </section>
-        </div>
+                    const imgPart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
+                    if (imgPart?.inlineData) {
+                        up[index].imageUrl = `data:image/png;base64,${imgPart.inlineData.data}`;
+                    }
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    up[index].isLoading = false;
+                    setPages([...up]);
+                }
+            };
 
-        <div className="p-4 border-t bg-slate-50 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => importRef.current?.click()} className="py-2 text-[9px] font-bold border rounded-lg bg-white uppercase">Import</button>
-            <button onClick={exportProject} className="py-2 text-[9px] font-bold border rounded-lg bg-white uppercase">Export</button>
-            <input type="file" ref={importRef} className="hidden" accept=".json" onChange={importProject} />
-          </div>
-          <button onClick={() => window.print()} className="w-full py-3 bg-slate-800 text-white text-[10px] font-bold rounded-xl uppercase tracking-widest shadow-md">🖨️ Stampa PDF</button>
-        </div>
-      </aside>
+            const generateAllImages = async () => {
+                if (pages.length === 0) return alert("Genera prima il testo.");
+                setIsProcessing(true);
+                for (let i = 0; i < pages.length; i++) {
+                    setStatus(`Illustrazione pagina ${i + 1}/${pages.length}...`);
+                    await generateImageForPage(i);
+                }
+                setIsProcessing(false);
+                setStatus('Libro completato! ✨');
+                setTimeout(() => setStatus(''), 4000);
+            };
 
-      {/* Main Preview Area */}
-      <main className="no-print flex-1 flex flex-col items-center justify-center p-12 relative bg-gradient-to-br from-slate-100 to-slate-200">
-        <div className="absolute top-10 flex items-center gap-8 z-40">
-          <button onClick={() => setCurrentIndex(prev => Math.max(-1, prev - 1))} className="bg-white p-4 rounded-full shadow-2xl hover:scale-110 disabled:opacity-20" disabled={currentIndex === -1}>❮</button>
-          <div className="bg-white/95 px-10 py-3 rounded-full text-[10px] font-black text-slate-500 shadow-xl border border-white uppercase tracking-[0.3em] min-w-[200px] text-center">
-            {currentIndex === -1 ? 'Copertina' : currentIndex === -2 ? 'Fine Libro' : `Pagina ${currentIndex + 1} / ${pages.length}`}
-          </div>
-          <button onClick={() => {
-            if (currentIndex === pages.length - 1) setCurrentIndex(-2);
-            else if (currentIndex === -2) return;
-            else setCurrentIndex(prev => prev + 1);
-          }} className="bg-white p-4 rounded-full shadow-2xl hover:scale-110 disabled:opacity-20" disabled={currentIndex === -2 || (pages.length === 0 && currentIndex === -1)}>❯</button>
-        </div>
+            // --- Export / Import ---
+            const exportData = () => {
+                if (pages.length === 0) return alert("Niente da esportare.");
+                const blob = new Blob([JSON.stringify({ title, author, pages, settings, currentStyle })], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const fileName = (title || 'mio_libro').trim().toLowerCase().replace(/[^a-z0-9]/gi, '_') + '.json';
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                a.click();
+            };
 
-        <div className="transform scale-[0.45] sm:scale-[0.55] lg:scale-[0.75] xl:scale-100 transition-all duration-700">
-          {renderSpread(currentIndex)}
-        </div>
-      </main>
+            const importData = (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    try {
+                        const d = JSON.parse(ev.target?.result);
+                        setTitle(d.title || '');
+                        setAuthor(d.author || '');
+                        setPages(d.pages || []);
+                        setSettings(d.settings || settings);
+                        setCurrentStyle(d.currentStyle || ImageStyle.DISNEY);
+                        setCurrentIndex(-1);
+                    } catch (err) { alert("File non valido."); }
+                };
+                reader.readAsText(file);
+            };
 
-      {/* Print View */}
-      <div className="print-only">
-        {renderSpread(-1)}
-        {pages.map((_, i) => <div key={i}>{renderSpread(i)}</div>)}
-        {renderSpread(-2)}
-      </div>
-    </div>
-  );
-};
+            // --- Rendering ---
+            if (isKeyActive === false) {
+                return (
+                    <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-900 text-white p-12 text-center">
+                        <div className="max-w-md space-y-8">
+                            <div className="text-8xl">🔐</div>
+                            <h1 className="text-5xl font-amatic font-bold tracking-widest uppercase">Studio Bloccato</h1>
+                            <p className="text-slate-400 text-sm">
+                                Per attivare Gemini 3 Pro (Testo e Immagini), è necessario collegare la tua chiave API.
+                            </p>
+                            <button onClick={handleAuth} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold tracking-widest shadow-2xl transition-all">
+                                CONFIGURA CHIAVE API
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
 
-const root = createRoot(document.getElementById('root')!);
-root.render(<App />);
+            const renderSpread = (idx) => {
+                if (idx === -1) { // Copertina
+                    return (
+                        <div className="book-spread flex-col items-center justify-center text-center">
+                            <div className="space-y-12 px-20">
+                                <h1 className="font-playfair text-7xl text-slate-900 uppercase tracking-tighter border-b-2 border-slate-200 pb-10 leading-none">{title || "Titolo"}</h1>
+                                <p className="font-patrick text-4xl text-slate-400 italic">di {author || "Autore"}</p>
+                            </div>
+                            <div className="absolute bottom-10 text-[10px] text-slate-200 tracking-[1em] font-black uppercase">Copertina</div>
+                        </div>
+                    );
+                }
+                if (idx === -2) { // Retro
+                    return (
+                        <div className="book-spread flex-col items-center justify-center p-20 bg-slate-50 text-slate-300 text-center border-l-[30px] border-slate-200">
+                            <div className="text-5xl mb-8 opacity-20">📖</div>
+                            <p className="text-[10px] tracking-[0.5em] font-bold uppercase">© {author || "Autore"} {new Date().getFullYear()}</p>
+                        </div>
+                    );
+                }
+
+                const page = pages[idx];
+                return (
+                    <div className="book-spread">
+                        <div className="book-spine" />
+                        {/* Testo */}
+                        <div className="page-side bg-slate-50 border-r border-slate-100 overflow-hidden">
+                            <div 
+                                className={`w-full text-center outline-none leading-relaxed overflow-y-auto max-h-full custom-scrollbar ${settings.fontFamily}`}
+                                style={{ fontSize: `${settings.fontSize}px`, color: settings.textColor }}
+                                contentEditable
+                                suppressContentEditableWarning
+                                onBlur={(e) => {
+                                    const up = [...pages];
+                                    up[idx].text = e.currentTarget.innerText;
+                                    setPages(up);
+                                }}
+                            >
+                                {page.text}
+                            </div>
+                        </div>
+                        {/* Immagine */}
+                        <div className="page-side bg-white">
+                            {page.isLoading ? (
+                                <div className="animate-pulse flex flex-col items-center gap-4">
+                                    <div className="w-12 h-12 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                                    <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Dipingendo...</span>
+                                </div>
+                            ) : page.imageUrl ? (
+                                <img src={page.imageUrl} className="max-w-full max-h-full object-contain rounded shadow-lg border border-slate-50" />
+                            ) : (
+                                <div className="flex flex-col items-center opacity-10">
+                                    <span className="text-8xl mb-4">🎨</span>
+                                    <button onClick={() => generateImageForPage(idx)} className="text-[10px] font-black text-indigo-500 underline uppercase tracking-widest">Crea Immagine</button>
+                                </div>
+                            )}
+                            <div className="absolute bottom-6 right-8 text-[9px] text-slate-300 font-bold uppercase tracking-widest">Pagina {idx + 1}</div>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="flex h-screen w-full bg-slate-100">
+                    <aside className="no-print w-80 bg-white border-r flex flex-col shadow-2xl z-50">
+                        <div className="p-8 bg-slate-900 text-white">
+                            <h2 className="text-3xl font-amatic font-bold tracking-[0.2em] uppercase">AI StoryStudio</h2>
+                            <p className="text-[9px] font-bold opacity-40 uppercase tracking-widest">Documentary Creator</p>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+                            <section className="space-y-4">
+                                <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">1. Info</h3>
+                                <input type="text" placeholder="Titolo" className="w-full p-2 text-sm border-b outline-none font-bold" value={title} onChange={e => setTitle(e.target.value)} />
+                                <input type="text" placeholder="Autore" className="w-full p-2 text-sm border-b outline-none" value={author} onChange={e => setAuthor(e.target.value)} />
+                            </section>
+
+                            <section className="space-y-4 pt-2">
+                                <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">2. Idea Evolutiva</h3>
+                                <textarea 
+                                    placeholder="Es: Ricerca sul Sudafrica... o la Storia di un Robot..."
+                                    className="w-full h-36 p-4 text-xs border rounded-2xl outline-none focus:ring-2 ring-indigo-50 resize-none leading-relaxed"
+                                    value={prompt}
+                                    onChange={e => setPrompt(e.target.value)}
+                                />
+                                <div className="flex justify-between items-center text-[9px] font-black uppercase">
+                                    <span className="text-slate-400">Pagine</span>
+                                    <span className="text-indigo-600">{numPages}</span>
+                                </div>
+                                <input type="range" min="1" max="20" className="w-full accent-indigo-600 cursor-pointer" value={numPages} onChange={e => setNumPages(parseInt(e.target.value))} />
+                                <button onClick={generateStoryText} disabled={isProcessing} className="w-full py-4 bg-indigo-600 text-white font-black text-[10px] rounded-2xl uppercase tracking-[0.2em] shadow-xl hover:bg-indigo-700 transition-all">Genera Testo</button>
+                            </section>
+
+                            <section className="space-y-4 border-t pt-6">
+                                <h3 className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">3. Arte</h3>
+                                <select className="w-full p-3 text-xs border rounded-2xl outline-none" value={currentStyle} onChange={e => setCurrentStyle(e.target.value)}>
+                                    {Object.values(ImageStyle).map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+                                </select>
+                                <button 
+                                    onClick={generateAllImages}
+                                    disabled={isProcessing || pages.length === 0}
+                                    className={`w-full py-4 rounded-2xl font-black text-white text-[10px] uppercase shadow-xl transition-all ${isProcessing ? 'bg-slate-300' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                                >
+                                    Crea Illustrazioni
+                                </button>
+                                {status && <p className="text-[9px] text-center font-bold text-indigo-500 animate-pulse uppercase pt-2">{status}</p>}
+                            </section>
+
+                            <section className="space-y-4 border-t pt-6">
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stile Testo</h3>
+                                <select className="w-full p-3 text-xs border rounded-xl" value={settings.fontFamily} onChange={e => setSettings({...settings, fontFamily: e.target.value})}>
+                                    {FONTS.map(f => <option key={f.value} value={f.value}>{f.name}</option>)}
+                                </select>
+                                <input type="range" min="14" max="48" className="w-full accent-slate-300" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} />
+                            </section>
+                        </div>
+
+                        <div className="p-6 border-t bg-slate-50 space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                                <button onClick={() => importRef.current.click()} className="py-3 text-[9px] font-black border rounded-xl bg-white uppercase">Import</button>
+                                <button onClick={exportData} className="py-3 text-[9px] font-black border rounded-xl bg-white uppercase">Export</button>
+                                <input type="file" ref={importRef} className="hidden" accept=".json" onChange={importData} />
+                            </div>
+                            <button onClick={() => window.print()} className="w-full py-4 bg-slate-800 text-white text-[10px] font-black rounded-2xl uppercase tracking-[0.2em]">🖨️ Stampa PDF</button>
+                        </div>
+                    </aside>
+
+                    <main className="no-print flex-1 flex flex-col items-center justify-center p-12 relative bg-gradient-to-br from-slate-100 to-white">
+                        <div className="absolute top-10 flex items-center gap-10 z-40">
+                            <button onClick={() => setCurrentIndex(prev => Math.max(-1, prev - 1))} className="bg-white p-5 rounded-full shadow-2xl hover:scale-110 disabled:opacity-20" disabled={currentIndex === -1}>❮</button>
+                            <div className="bg-white/90 backdrop-blur px-12 py-4 rounded-full text-[11px] font-black text-slate-500 shadow-xl border border-white uppercase tracking-[0.4em] min-w-[240px] text-center">
+                                {currentIndex === -1 ? 'Copertina' : currentIndex === -2 ? 'Fine' : `Pagina ${currentIndex + 1} / ${pages.length}`}
+                            </div>
+                            <button onClick={() => {
+                                if (currentIndex === pages.length - 1) setCurrentIndex(-2);
+                                else if (currentIndex === -2) return;
+                                else setCurrentIndex(prev => prev + 1);
+                            }} className="bg-white p-5 rounded-full shadow-2xl hover:scale-110 disabled:opacity-20" disabled={currentIndex === -2 || (pages.length === 0 && currentIndex === -1)}>❯</button>
+                        </div>
+
+                        <div className="transform scale-[0.4] sm:scale-[0.5] lg:scale-[0.7] xl:scale-[0.9] 2xl:scale-100 transition-all duration-700 ease-in-out">
+                            {renderSpread(currentIndex)}
+                        </div>
+                    </main>
+
+                    <div className="print-only">
+                        {renderSpread(-1)}
+                        {pages.map((_, i) => <div key={i}>{renderSpread(i)}</div>)}
+                        {renderSpread(-2)}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
